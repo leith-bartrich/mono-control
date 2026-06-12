@@ -1,46 +1,110 @@
-"""Command-line entrypoint for mono-control."""
+"""Command-line entrypoint for mono-control (Typer + Rich)."""
 
-import argparse
+import shlex
 from importlib.metadata import version
-from pathlib import Path
 
+import click
+import typer
+from rich.console import Console
+from rich.table import Table
+
+from mono_control.config import ConfigError, load_config
+from mono_control.paths import CONFIG_DIR, REPOS_DIR
 from mono_control.sandbox import require_container
 
-WORKSPACES = Path("/workspaces")
-
-# Directories mono-control governs, bind-mounted as siblings in the container.
-MANAGED_DIRS = ("mono-config", "mono-repos")
-
-
-def _status() -> int:
-    """Report which managed workspace directories are visible."""
-    for name in MANAGED_DIRS:
-        path = WORKSPACES / name
-        mark = "ok " if path.is_dir() else "missing"
-        print(f"  [{mark}] {path}")
-    return 0
+app = typer.Typer(
+    name="mono-control",
+    help="Repo state manager for the fiemono workspace.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+console = Console()
 
 
-def main(argv: list[str] | None = None) -> int:
-    require_container()
+def _version_callback(value: bool) -> None:
+    if value:
+        console.print(f"mono-control {version('mono-control')}")
+        raise typer.Exit()
 
-    parser = argparse.ArgumentParser(
-        prog="mono-control",
-        description="Repo state manager for the fiemono workspace.",
-    )
-    parser.add_argument(
+
+@app.callback()
+def _root(
+    _version: bool = typer.Option(
+        None,
         "--version",
-        action="version",
-        version=f"%(prog)s {version('mono-control')}",
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser(
-        "status",
-        help="Report which managed workspace directories are visible.",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the version and exit.",
+    ),
+) -> None:
+    """Repo state manager for the fiemono workspace."""
+
+
+@app.command()
+def status() -> None:
+    """Report which managed workspace directories are visible."""
+    table = Table("status", "path", show_edge=False, box=None)
+    for path in (CONFIG_DIR, REPOS_DIR):
+        if path.is_dir():
+            table.add_row("[green]ok[/green]", str(path))
+        else:
+            table.add_row("[red]missing[/red]", str(path))
+    console.print(table)
+
+
+@app.command()
+def validate() -> None:
+    """Load and validate the mono-config directory."""
+    try:
+        load_config()
+    except ConfigError as e:
+        console.print(f"[red]error:[/red] {e}")
+        raise typer.Exit(code=1)
+    console.print("[green]ok:[/green] config is valid")
+
+
+_REPL_EXIT = {":exit", ":quit", "exit", "quit"}
+
+
+@app.command()
+def repl(ctx: typer.Context) -> None:
+    """Start an interactive REPL over mono-control commands."""
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.completion import WordCompleter
+    from prompt_toolkit.history import InMemoryHistory
+
+    # The Typer app compiles to a Click group; dispatch each REPL line against it.
+    group: click.Group = ctx.parent.command if ctx.parent else ctx.command
+    names = [n for n in group.commands if n != "repl"]
+    session = PromptSession(
+        history=InMemoryHistory(),
+        completer=WordCompleter(names + sorted(_REPL_EXIT), ignore_case=True),
     )
 
-    args = parser.parse_args(argv)
+    console.print(
+        "mono-control REPL — run a command, [bold]--help[/bold], or [bold]:exit[/bold]."
+    )
+    while True:
+        try:
+            line = session.prompt("mono-control> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if not line:
+            continue
+        if line in _REPL_EXIT:
+            break
+        try:
+            # standalone_mode=False: return instead of sys.exit, raise on usage errors.
+            group.main(args=shlex.split(line), prog_name="mono-control", standalone_mode=False)
+        except click.ClickException as e:
+            e.show()
+        except SystemExit:
+            pass
+        except Exception as e:  # keep the REPL alive on command errors
+            console.print(f"[red]error:[/red] {e}")
 
-    if args.command == "status":
-        return _status()
-    return 0
+
+def main() -> None:
+    """Console-script entrypoint: gate on the sandbox, then dispatch."""
+    require_container()
+    app()
