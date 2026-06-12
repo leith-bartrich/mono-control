@@ -1,7 +1,7 @@
 {
   "name": "mono-control",
   "image": "mcr.microsoft.com/devcontainers/universal:2",
-  "remoteUser": "vscode",
+  "remoteUser": "codespace",
 
   // Install uv (Astral's Python package manager) via the official installer.
   // There is no first-party dev container feature for uv, so we use the
