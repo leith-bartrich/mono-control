@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+# In-tree build backend (see _build/gate.py). It wraps hatchling but refuses to
+# build outside the dev container — the install-time half of the sandbox gate.
+build-backend = "gate"
+backend-path = ["_build"]
+
+[project]
+name = "mono-control"
+version = "0.0.0"
+description = "Repo state manager for the fiemono workspace — brings managed repos to a declared state."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+mono-control = "mono_control.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mono_control"]
+
+[dependency-groups]
+dev = ["pytest"]

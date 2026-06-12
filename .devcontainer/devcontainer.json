@@ -11,6 +11,15 @@
     "PATH": "${containerEnv:HOME}/.local/bin:${containerEnv:PATH}"
   },
 
+  // Sandbox sentinel. Set on the container (not just VS Code terminals) so it
+  // is inherited by every process, including the isolated build subprocess uv
+  // spawns. The build backend and the CLI entrypoint refuse to run without it,
+  // so `uv sync` / running the tool on the host fails fast — a supply-chain
+  // safeguard that keeps untrusted dependencies off the host. See the README.
+  "containerEnv": {
+    "MONO_CONTROL_IN_CONTAINER": "1"
+  },
+
   // Bind-mount the sibling workspace directories from the host so the tooling
   // inside the container can see mono-config and mono-repos. Source paths are
   // relative to mono-control's location on the host; run `mproj init` first to
