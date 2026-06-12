@@ -5,11 +5,28 @@
 
   // Install uv (Astral's Python package manager) via the official installer.
   // There is no first-party dev container feature for uv, so we use the
-  // upstream install script and expose it on PATH for the vscode user.
+  // upstream install script and expose it on PATH for the remote user.
   "postCreateCommand": "curl -LsSf https://astral.sh/uv/install.sh | sh",
   "remoteEnv": {
     "PATH": "${containerEnv:HOME}/.local/bin:${containerEnv:PATH}"
   },
+
+  // Bind-mount the sibling workspace directories from the host so the tooling
+  // inside the container can see mono-config and mono-repos. Source paths are
+  // relative to mono-control's location on the host; run `mproj init` first to
+  // ensure they exist (a missing source silently mounts as an empty dir).
+  "mounts": [
+    {
+      "source": "${localWorkspaceFolder}/../mono-config",
+      "target": "/workspaces/mono-config",
+      "type": "bind"
+    },
+    {
+      "source": "${localWorkspaceFolder}/../mono-repos",
+      "target": "/workspaces/mono-repos",
+      "type": "bind"
+    }
+  ],
 
   "customizations": {
     "vscode": {
