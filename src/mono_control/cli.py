@@ -2,14 +2,16 @@
 
 import shlex
 from importlib.metadata import version
+from pathlib import Path
 
 import click
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from mono_control.config import ConfigError, load_config
+from mono_control.config import ConfigError, RepoStore, load_config
 from mono_control.paths import CONFIG_DIR, REPOS_DIR
+from mono_control.repo_cli import repo_app
 from mono_control.sandbox import require_container
 
 app = typer.Typer(
@@ -18,6 +20,7 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+app.add_typer(repo_app, name="repo")
 console = Console()
 
 
@@ -29,6 +32,10 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def _root(
+    ctx: typer.Context,
+    config_dir: Path = typer.Option(
+        CONFIG_DIR, "--config-dir", help="Path to the mono-config directory."
+    ),
     _version: bool = typer.Option(
         None,
         "--version",
@@ -38,13 +45,14 @@ def _root(
     ),
 ) -> None:
     """Repo state manager for the fiemono workspace."""
+    ctx.obj = config_dir
 
 
 @app.command()
-def status() -> None:
+def status(ctx: typer.Context) -> None:
     """Report which managed workspace directories are visible."""
     table = Table("status", "path", show_edge=False, box=None)
-    for path in (CONFIG_DIR, REPOS_DIR):
+    for path in (ctx.obj, REPOS_DIR):
         if path.is_dir():
             table.add_row("[green]ok[/green]", str(path))
         else:
@@ -53,14 +61,28 @@ def status() -> None:
 
 
 @app.command()
-def validate() -> None:
-    """Load and validate the mono-config directory."""
+def validate(ctx: typer.Context) -> None:
+    """Load and validate the mono-config directory (including repo definitions)."""
+    config_dir: Path = ctx.obj
     try:
-        load_config()
+        load_config(config_dir)
     except ConfigError as e:
         console.print(f"[red]error:[/red] {e}")
         raise typer.Exit(code=1)
-    console.print("[green]ok:[/green] config is valid")
+
+    store = RepoStore.from_config_dir(config_dir)
+    slugs = store.list(include_retired=True)
+    errors = []
+    for slug in slugs:
+        try:
+            store.load(slug)
+        except ConfigError as e:
+            errors.append((slug, e))
+    if errors:
+        for slug, e in errors:
+            console.print(f"[red]error[/red] repo {slug}: {e}")
+        raise typer.Exit(code=1)
+    console.print(f"[green]ok:[/green] config is valid ({len(slugs)} repo(s))")
 
 
 _REPL_EXIT = {":exit", ":quit", "exit", "quit"}
