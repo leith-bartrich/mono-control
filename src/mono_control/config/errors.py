@@ -19,3 +19,7 @@ class ConfigParseError(ConfigError):
 
 class ConfigValidationError(ConfigError):
     """A config file parsed but did not match the expected schema."""
+
+
+class ConfigVersionError(ConfigError):
+    """The document's version is missing, unknown, too new, or un-migratable."""

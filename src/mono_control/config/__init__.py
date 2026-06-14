@@ -5,15 +5,18 @@ from .errors import (
     ConfigNotFoundError,
     ConfigParseError,
     ConfigValidationError,
+    ConfigVersionError,
 )
 from .loader import load_config
-from .models import WorkspaceConfig
+from .models import VersionedModel, WorkspaceConfig
 
 __all__ = [
     "load_config",
     "WorkspaceConfig",
+    "VersionedModel",
     "ConfigError",
     "ConfigNotFoundError",
     "ConfigParseError",
     "ConfigValidationError",
+    "ConfigVersionError",
 ]

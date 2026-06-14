@@ -46,7 +46,7 @@ def load_config(config_dir: Path | None = None) -> WorkspaceConfig:
     # FUTURE: merge additional named files from config_dir here.
 
     try:
-        return WorkspaceConfig.model_validate(data)
+        return WorkspaceConfig.load(data)
     except ValidationError as e:
         raise ConfigValidationError(
             f"{config_dir / SYSTEM_FILE} failed validation:\n{e}"

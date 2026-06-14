@@ -6,6 +6,7 @@ from mono_control.config import (
     ConfigNotFoundError,
     ConfigParseError,
     ConfigValidationError,
+    ConfigVersionError,
     load_config,
 )
 from mono_control.paths import SYSTEM_FILE
@@ -16,10 +17,22 @@ def _write_system(config_dir, data):
     (config_dir / SYSTEM_FILE).write_text(json.dumps(data))
 
 
-def test_load_empty_config(tmp_path):
-    _write_system(tmp_path, {})
+def test_load_minimal_config(tmp_path):
+    _write_system(tmp_path, {"version": 1})
     config = load_config(tmp_path)
-    assert config is not None
+    assert config.version == 1
+
+
+def test_missing_version(tmp_path):
+    _write_system(tmp_path, {})
+    with pytest.raises(ConfigVersionError):
+        load_config(tmp_path)
+
+
+def test_version_too_new(tmp_path):
+    _write_system(tmp_path, {"version": 2})
+    with pytest.raises(ConfigVersionError):
+        load_config(tmp_path)
 
 
 def test_missing_directory(tmp_path):
@@ -41,6 +54,6 @@ def test_malformed_json(tmp_path):
 
 
 def test_unknown_key_rejected(tmp_path):
-    _write_system(tmp_path, {"bogus": 1})
+    _write_system(tmp_path, {"version": 1, "bogus": 1})
     with pytest.raises(ConfigValidationError):
         load_config(tmp_path)
