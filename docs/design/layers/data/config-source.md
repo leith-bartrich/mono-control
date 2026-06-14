@@ -30,9 +30,10 @@ model. Its on-disk, persisted form is **JSON**:
   validates it against the corresponding model. Validation is **strict**
   (unknown keys are rejected), so typos and stale fields fail loudly rather than
   being silently ignored.
-- **One direction here.** Within `mono-control` the flow is JSON → model.
-  Serialization (model → JSON) is an authoring concern that belongs to
-  `mono-config`, not to this source.
+- **Mostly read, sometimes authored.** The primary flow is JSON → model
+  (deserialize-and-validate). Some abstractions are also **authored** by
+  mono-control — e.g. [repo](repo.md) definitions written via `mono-control
+  repo …` — so model → JSON serialization lives here too for those.
 
 JSON was chosen for zero-dependency parsing (stdlib `json`) and because the
 manifest is machine-and-human readable. The validation/typing is what pydantic

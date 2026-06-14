@@ -39,6 +39,27 @@ remotes — with one deliberate choice: we use a **human-readable slug** as the
 immutable key rather than an opaque hash, trading a little drift-from-name for
 legible snapshots and config.
 
+Both **sources** and **branches** are stored as *named maps* (`name → url` and
+`name → branch`). The conventions for what a given name *means* — which source is
+the default, which branch is `main` versus `dev` — are deferred; the model just
+holds the maps.
+
+## Storage and lifecycle
+
+Each repo is one JSON file at `mono-config/repos/<slug>.json` — the directory
+*is* the registry (adding a file adds a repo), and the filename is the slug,
+cross-checked against the in-file `slug`. mono-control **authors** these files
+(via `mono-control repo …` and the interactive `repo manage` UI); this is the
+first place the tool writes config rather than only reading it.
+
+Deletion is two-tiered, because a [snapshot](snapshot.md) may reference a repo by
+slug:
+
+- **Retire** (soft, default) — a tombstone flag; the slug stays reserved and the
+  change is reversible. Retired repos are hidden from normal listings.
+- **Purge** (hard, heavily guarded) — physically removes the definition. The
+  guarded path that makes true deletion possible without making it easy.
+
 Repos are the members of [repo sets](repo-set.md), and the things a
 [target](target.md) pins to a desired ref and a [snapshot](snapshot.md) records
 at an exact commit.
