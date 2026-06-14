@@ -23,3 +23,7 @@ class ConfigValidationError(ConfigError):
 
 class ConfigVersionError(ConfigError):
     """The document's version is missing, unknown, too new, or un-migratable."""
+
+
+class ConfigConflictError(ConfigError):
+    """An attempt to create a config document that already exists."""

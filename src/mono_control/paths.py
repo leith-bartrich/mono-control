@@ -14,3 +14,9 @@ REPOS_DIR = WORKSPACES / "mono-repos"  # where managed repos are cloned
 # Provisional top-level file within CONFIG_DIR. The full directory layout (which
 # named files exist) is still being designed; the loader reads this for now.
 SYSTEM_FILE = "system.json"
+
+# Subdirectory of CONFIG_DIR holding one repo definition per file, named by the
+# repo's immutable slug (`<slug>.json`). Distinct from REPOS_DIR, which is where
+# the managed repos are actually cloned.
+REPOS_SUBDIR = "repos"
+REPOS_CONFIG_DIR = CONFIG_DIR / REPOS_SUBDIR
