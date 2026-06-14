@@ -105,7 +105,14 @@ each document type subclasses it. Migrations are tested from static JSON fixture
 
 ## Document map
 
+This file is the *how* (the mechanism); the concept files are the *what* (the
+abstractions the configuration describes):
+
 - **[README](README.md)** — the data layer overview and its index of sources.
 - **This file** — the configuration data source: storage, location, loading.
-- **Per-abstraction files** (added to this directory as each is designed) —
-  describe an individual configuration abstraction and the model behind it.
+- **Concept files** — one per abstraction:
+  - [mono-project.md](mono-project.md) — the whole workspace.
+  - [repo.md](repo.md) — an individual managed repository.
+  - [repo-set.md](repo-set.md) — a named subset of repos.
+  - [target.md](target.md) — a desired state.
+  - [snapshot.md](snapshot.md) — a concrete state.
