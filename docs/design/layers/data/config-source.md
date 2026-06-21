@@ -100,7 +100,7 @@ A few deliberate properties:
 - **Per-document.** Versioning is independent per file/abstraction — each has its
   own `CURRENT_VERSION` and migration chain, not one global workspace version.
 
-The machinery lives in `VersionedModel` (`src/mono_control/config/models.py`);
+The machinery lives in `VersionedModel` (`src/mono_control/base_models.py`);
 each document type subclasses it. Migrations are tested from static JSON fixtures
 (old document text in, expected current model out).
 
