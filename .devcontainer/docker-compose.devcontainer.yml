@@ -1,0 +1,25 @@
+# Dev-time-only overlay, merged on top of docker-compose.yml by VS Code via the
+# dockerComposeFile array in devcontainer.json. Everything here exists ONLY during
+# interactive development; the headless `mproj` shim runs the base file alone.
+#
+# Dev differs from headless entirely in its mounts:
+#   - mono-control: bind LIVE source over the image's baked-in copy, so edits are
+#     immediate (the baked code is shadowed while this mount is present).
+#   - mono-config / mono-repos: bind the sibling workspace dirs. In headless these
+#     are supplied per-run by the shim instead; here they are the fixed siblings.
+#   - mono-control-claude: persist Claude Code auth + history across rebuilds. A
+#     static volume name keeps each developer's copy local to their machine.
+#     postCreateCommand chowns it to codespace (named volumes mount root-owned).
+#
+# Relative sources resolve from this file's directory (.devcontainer): `..` is the
+# mono-control root, `../..` is the workspace root holding the siblings.
+services:
+  mono-control:
+    volumes:
+      - ..:/workspaces/mono-control
+      - ../../mono-config:/workspaces/mono-config
+      - ../../mono-repos:/workspaces/mono-repos
+      - mono-control-claude:/home/codespace/.claude
+
+volumes:
+  mono-control-claude:

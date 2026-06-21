@@ -1,0 +1,10 @@
+# Build context = the mono-control repo root (see docker-compose.yml build.context).
+# Keep the image build lean and deterministic: exclude local/dev cruft. Note that
+# _build/ (the PEP 517 build backend) and README.md (pyproject readme) MUST stay.
+.git
+.venv
+**/__pycache__
+*.pyc
+.pytest_cache
+.devcontainer
+_build/dist

@@ -1,0 +1,32 @@
+# Source of truth for the mono-control container — the pure, self-contained built
+# tool, shared by both use modes:
+#
+#   Mode 1 (interactive dev): devcontainer.json layers docker-compose.devcontainer.yml
+#     on top of this, bind-mounting live source and the sibling workspace dirs.
+#   Mode 2 (headless): the host `mproj` shim runs `docker compose run --rm` against
+#     THIS file alone, supplying the workspace's mono-config / mono-repos as per-run
+#     `-v` bind mounts whose host paths it resolves at call time. The container-side
+#     targets are fixed at /workspaces/mono-config and /workspaces/mono-repos to
+#     match src/mono_control/paths.py.
+#
+# What lives here is exactly what both modes share: the image, the sandbox
+# sentinel, and the run context. mono-control itself is baked INTO the image (see
+# the Dockerfile), so it needs no mount in the headless path. The mutable
+# workspace dirs are intentionally NOT mounted here — dev adds them via the
+# overlay, headless adds them per-run via the shim.
+services:
+  mono-control:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    user: codespace
+    working_dir: /workspaces/mono-control
+    # Keep the container alive for VS Code to attach. Mode 2's
+    # `docker compose run --rm` overrides this with the real command.
+    command: sleep infinity
+    environment:
+      # Sandbox sentinel. Both the install-time build gate (_build/gate.py) and
+      # the run-time CLI gate (src/mono_control/sandbox.py) refuse to proceed
+      # unless this is set. On the service so every process — including the
+      # headless path — inherits it.
+      MONO_CONTROL_IN_CONTAINER: "1"
