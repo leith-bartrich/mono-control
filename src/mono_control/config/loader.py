@@ -1,8 +1,10 @@
-"""Load and validate the mono-config directory into pydantic models.
+"""Load, validate, and save the mono-config directory's workspace config.
 
 Directory-oriented: ``load_config`` takes the config *directory*. Today it reads
 a single provisional ``system.json``; the marked seam below is where additional
-named files get merged in once the directory layout is designed.
+named files get merged in once the directory layout is designed. ``save_config``
+is its write-side counterpart — the workspace config is a singleton file, so a
+function pair fits it (unlike the per-slug ``RepoStore`` collection).
 """
 
 import json
@@ -51,3 +53,16 @@ def load_config(config_dir: Path | None = None) -> WorkspaceConfig:
         raise ConfigValidationError(
             f"{config_dir / SYSTEM_FILE} failed validation:\n{e}"
         ) from e
+
+
+def save_config(config: WorkspaceConfig, config_dir: Path | None = None) -> None:
+    """Write ``config`` to ``system.json`` in the config directory.
+
+    The write-side counterpart to ``load_config``, modeled on ``RepoStore.save``:
+    creates the directory if needed and serializes the model to indented JSON
+    with a trailing newline. ``config_dir`` defaults to the bind-mounted
+    CONFIG_DIR; pass an explicit path in tests.
+    """
+    config_dir = config_dir or CONFIG_DIR
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / SYSTEM_FILE).write_text(config.model_dump_json(indent=2) + "\n")

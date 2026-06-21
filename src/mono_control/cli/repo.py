@@ -114,7 +114,7 @@ def add(
 @repo_app.command()
 def manage(ctx: typer.Context) -> None:
     """Interactively manage repo definitions (menu-driven)."""
-    from mono_control.repo_ui import manage as run_manage
+    from .repo_ui import manage as run_manage
 
     run_manage(_store(ctx))
 

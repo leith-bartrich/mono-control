@@ -11,8 +11,10 @@ from rich.table import Table
 
 from mono_control.config import ConfigError, RepoStore, load_config
 from mono_control.paths import CONFIG_DIR, REPOS_DIR
-from mono_control.repo_cli import repo_app
 from mono_control.sandbox import require_container
+
+from .config import config_app
+from .repo import repo_app
 
 app = typer.Typer(
     name="mono-control",
@@ -21,6 +23,7 @@ app = typer.Typer(
     add_completion=False,
 )
 app.add_typer(repo_app, name="repo")
+app.add_typer(config_app, name="config")
 console = Console()
 
 
@@ -45,6 +48,15 @@ def _root(
     ),
 ) -> None:
     """Repo state manager for the fiemono workspace."""
+    if not config_dir.is_absolute():
+        # A relative path here silently mkdir-s a junk tree under the container's
+        # working dir (the bind-mounted repo). A forward-slash Windows path like
+        # 'C:/...' is the classic offender — absolute on the host, relative here.
+        raise typer.BadParameter(
+            f"--config-dir must be an absolute path, got {str(config_dir)!r}. "
+            "A Windows-style path like 'C:/...' is relative inside the container.",
+            param_hint="--config-dir",
+        )
     ctx.obj = config_dir
 
 

@@ -8,12 +8,13 @@ from .errors import (
     ConfigValidationError,
     ConfigVersionError,
 )
-from .loader import load_config
+from .loader import load_config, save_config
 from .models import Repo, VersionedModel, WorkspaceConfig
 from .repo_store import RepoStore
 
 __all__ = [
     "load_config",
+    "save_config",
     "WorkspaceConfig",
     "VersionedModel",
     "Repo",

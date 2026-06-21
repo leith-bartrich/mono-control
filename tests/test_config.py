@@ -7,7 +7,9 @@ from mono_control.config import (
     ConfigParseError,
     ConfigValidationError,
     ConfigVersionError,
+    WorkspaceConfig,
     load_config,
+    save_config,
 )
 from mono_control.paths import SYSTEM_FILE
 
@@ -57,3 +59,10 @@ def test_unknown_key_rejected(tmp_path):
     _write_system(tmp_path, {"version": 1, "bogus": 1})
     with pytest.raises(ConfigValidationError):
         load_config(tmp_path)
+
+
+def test_save_config_roundtrip(tmp_path):
+    target = tmp_path / "fresh"  # does not exist yet
+    save_config(WorkspaceConfig(version=1), target)
+    assert (target / SYSTEM_FILE).is_file()
+    assert load_config(target).version == 1
