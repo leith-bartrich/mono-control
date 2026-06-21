@@ -16,8 +16,9 @@ spec**, which may be:
 
 A target may also imply a **repo swap or relocation** (a different repo filling a
 slot, or a repo moving to a new checkout location). That is presumed possible,
-but is **runtime-gated for safety** — it surfaces as a [snapshot](snapshot.md)
-resolvability concern rather than something the target alone can guarantee.
+but is **runtime-gated for safety** — it is a per-verb materialization
+precondition, checked when the swap is actually performed, rather than something
+the target alone can guarantee.
 
 ## Observation (not yet a rule)
 

@@ -31,6 +31,28 @@ described in the [configuration data source](config-source.md): `version`
 selects the schema revision of a document, `kind` selects the subtype. A document
 can carry both.
 
-A repo set is the thing a [target](target.md) references when declaring a desired
-state. It can also be **projected from a [snapshot](snapshot.md)** — a snapshot's
-set of member slugs *is* a repo set's membership. Concrete fields are still TBD.
+## What a repo set *is*: enumerate + validate
+
+At its core a repo set is an **enumerable set of member slugs** that is *resolved
+against the current config*. That is the interface — `members()` plus
+`validate(config)` — and **both a persisted authored set and a
+[snapshot](snapshot.md) projection satisfy it** (a snapshot's member slugs *are* a
+repo set's membership). The persisted, authored form is what gets a name, an id,
+and a `kind`; the projected form is derived.
+
+`validate(config)` is the one semantic check, and it is purely an **existence
+gate**:
+
+- A **retired** member passes — its slug and definition are still present (retire
+  is a soft, reversible tombstone precisely so references survive).
+- A **purged** member fails — its definition is gone, leaving a dangling
+  reference. This is the "we didn't purge something we shouldn't have" check.
+
+That is *all* `validate` asserts. Whether a member can actually be **materialized**
+— a source is configured, the source is reachable, a given commit is present — is
+a ladder of **per-verb preconditions** defined where each verb lives, not a
+property of the set. (Schema validity — does a stored set parse into its model —
+is the separate, universal pydantic concern.)
+
+A repo set is also the thing a [target](target.md) references when declaring a
+desired state. Concrete fields are still TBD.

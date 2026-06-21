@@ -32,16 +32,29 @@ authoritative thing it executes against, and a [repo set](repo-set.md) can be
 originating **repo-set id** for tracking — non-authoritative provenance, not what
 it executes against.
 
-## Validity vs. resolvability
+## Usability is a passthrough to the repo set
 
-Two different properties, worth not conflating:
+A snapshot is **self-contained data**: it always deserializes and always projects
+a [repo set](repo-set.md) (its member slugs). So the only intrinsic question about
+a snapshot is **schema validity** — does the JSON parse into the model — which is
+universal (pydantic) and carries no snapshot-specific meaning.
 
-- **Validity** — a snapshot unambiguously identifies repos (by slug) at exact
-  commits and locations. This holds *forever*; nothing external can invalidate it.
-- **Resolvability** — whether it can be *materialized now*: does the current repo
-  definition expose a source for each slug, and does that commit still exist there?
-  This depends on mutable state and is the **runtime safety gate**. A repo
-  **swap or relocation** is allowed, but lands in exactly this gate.
+A snapshot therefore has **no valid/invalid distinction of its own**. Whether it
+is *usable* is two separate questions, neither owned by the snapshot:
+
+- **Does its repo set still hold against current config?** Project the repo set
+  and call its `validate(config)` — every member slug must still exist as a
+  [repo](repo.md) definition. A **retired** member passes (its slug and definition
+  are still present); only a **purged** member fails. This "we didn't purge
+  something we shouldn't have" check lives on the [repo set](repo-set.md); the
+  snapshot at most *delegates* to it.
+- **Can each repo actually be materialized?** This is not one property but a
+  **ladder of action-dependent preconditions** — a source is configured for the
+  slug, the source is reachable, the required commit is present there — each rung
+  more expensive than the last. Which rungs matter depends on the *verb*
+  (`materialize` needs all of them; reading a local checkout needs none), so they
+  are defined where each verb lives, not as a single property on the snapshot. A
+  repo **swap or relocation** is allowed and lands among these per-verb checks.
 
 ## Observation (not yet a rule)
 
