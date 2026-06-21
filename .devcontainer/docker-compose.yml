@@ -30,3 +30,7 @@ services:
       # unless this is set. On the service so every process — including the
       # headless path — inherits it.
       MONO_CONTROL_IN_CONTAINER: "1"
+      # Host-platform sentinel (see docs/design/host-platform.md). Interpolated
+      # from an overriding host env / .env, falling back to `generic` (matching
+      # the image's baked default). The shim's per-call `-e` still overrides this.
+      MONO_CONTROL_HOST_PLATFORM: "${MONO_CONTROL_HOST_PLATFORM:-generic}"

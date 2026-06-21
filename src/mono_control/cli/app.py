@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from mono_control.config import ConfigError, RepoStore, load_config
+from mono_control.host_platform import require_valid as require_valid_host_platform
 from mono_control.paths import CONFIG_DIR, REPOS_DIR
 from mono_control.sandbox import require_container
 
@@ -139,6 +140,7 @@ def repl(ctx: typer.Context) -> None:
 
 
 def main() -> None:
-    """Console-script entrypoint: gate on the sandbox, then dispatch."""
+    """Console-script entrypoint: gate on the sandbox + host platform, then dispatch."""
     require_container()
+    require_valid_host_platform()
     app()

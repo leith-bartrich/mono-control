@@ -47,6 +47,14 @@ RUN git config --system --add safe.directory '*'
 # without relying on devcontainer.json's remoteEnv (which the headless path skips).
 ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
 
+# Safe default for the host-platform sentinel (see docs/design/host-platform.md).
+# DELIBERATELY baked as a persistent ENV — unlike MONO_CONTROL_IN_CONTAINER, which
+# is intentionally NOT baked (the security gate must be absent on the host). This
+# one is an operational default with no security meaning: the image is
+# multi-platform, so `generic` is the safe fallback the shim / dev container
+# override per invocation with the detected host.
+ENV MONO_CONTROL_HOST_PLATFORM=generic
+
 USER ${USERNAME}
 
 # Bake mono-control into the image so the headless path (which runs no lifecycle
