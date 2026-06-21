@@ -111,8 +111,8 @@ open the repo in a GitHub Codespace.
 
 ## Building the image
 
-The same Dockerfile produces the image used for headless (prod) runs. From a
-workspace that has a `mono-control/` checkout, the shim builds it for you:
+The same Dockerfile produces the image used for headless (artifact-mode) runs.
+From a workspace that has a `mono-control/` checkout, the shim builds it for you:
 
 ```sh
 mproj build-control   # builds mono-control:latest into the local docker store
@@ -126,8 +126,8 @@ docker build -t mono-control:latest -f .devcontainer/Dockerfile .
 
 `mproj control` then runs mono-control against a workspace and picks the backend
 by whether a `mono-control/` checkout is present beside `mono-config/`: if it is,
-it uses Docker Compose against that live source (dev); if not, it runs the
-`mono-control:latest` image (prod). Distribution of a prebuilt image via ghcr.io
-is planned; until then, build it locally with `mproj build-control`.
+it uses Docker Compose against that live source (dev mode); if not, it runs the
+`mono-control:latest` image (artifact mode). Distribution of a prebuilt image via
+ghcr.io is planned; until then, build it locally with `mproj build-control`.
 
 > Placeholder — skeleton structure, to be built out.

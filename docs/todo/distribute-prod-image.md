@@ -27,7 +27,7 @@ for a real prod user — someone running `mproj control` against a workspace wit
 Pick this up when **any** of these becomes true:
 
 - There is a first real **prod consumer** — someone (or some machine/CI) running
-  `mproj control` in prod mode without a mono-control checkout.
+  `mproj control` in artifact mode without a mono-control checkout.
 - mono-control's feature set has **stabilized** enough to cut a versioned release
   (it is `0.0.0` today; a meaningful version implies something worth publishing).
 - Local-image **staleness** starts causing confusion (a prod run executing an old
@@ -45,7 +45,7 @@ Until then the local-build path is sufficient and publishing would be premature.
    local build (`_run_build_control` in the shim) — it is the natural place to add
    a `--push` flag for the manual/interactive path.
 2. **Point the shim at the registry ref.** Change `MONO_CONTROL_IMAGE` to the
-   ghcr.io ref (keep it overridable for local/offline use). In prod mode, on a
+   ghcr.io ref (keep it overridable for local/offline use). In artifact mode, on a
    missing image, `docker pull` it rather than failing — falling back to the
    build-from-source instructions only when the pull fails.
 3. **Define the refresh mechanism.** Decide how prod users get a newer image.
