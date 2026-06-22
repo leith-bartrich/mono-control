@@ -1,20 +1,22 @@
-"""Reusable pydantic base classes for versioned config documents.
+"""Reusable pydantic base classes for versioned documents.
 
-This is the generic model machinery shared by every config abstraction
-(``Repo``, and the upcoming repo-set / target / snapshot models): a strict base
-that rejects unknown keys, and ``VersionedModel``'s migrate-up-then-validate
-engine. The concrete domain models live in ``config/models.py``.
+The generic model machinery shared across domains (config ``Repo``, ``Snapshot``,
+``RepoSet``, …): a strict base that rejects unknown keys, and ``VersionedModel``'s
+migrate-up-then-validate engine.
 
-Note: ``VersionedModel`` raises ``ConfigVersionError`` from ``config.errors`` —
-an intentional upward import into the ``config`` subpackage. ``config/errors.py``
-is a dependency-free leaf, so there is no import cycle.
+Versioning failures raise the **neutral** ``VersionError`` defined here — this
+module is a true dependency-free leaf (only ``typing`` + ``pydantic``). Each
+domain translates ``VersionError`` into its own typed error at its load boundary
+(e.g. ``config`` → ``ConfigVersionError``, ``snapshot`` → ``SnapshotVersionError``).
 """
 
 from typing import Callable, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict
 
-from mono_control.config.errors import ConfigVersionError
+
+class VersionError(Exception):
+    """A versioned document's version is missing, unknown, too new, or un-migratable."""
 
 
 class StrictModel(BaseModel):
@@ -50,19 +52,19 @@ class VersionedModel(StrictModel):
     def _migrate(cls, data: dict) -> dict:
         v = data.get("version")
         if not isinstance(v, int):
-            raise ConfigVersionError("missing or invalid 'version'")
+            raise VersionError("missing or invalid 'version'")
         if v > cls.CURRENT_VERSION:
-            raise ConfigVersionError(
+            raise VersionError(
                 f"version {v} is newer than supported {cls.CURRENT_VERSION}"
             )
         while v < cls.CURRENT_VERSION:
             migrate = cls.MIGRATIONS.get(v)
             if migrate is None:
-                raise ConfigVersionError(f"no migration from version {v}")
+                raise VersionError(f"no migration from version {v}")
             data = migrate(data)
             nv = data.get("version")
             if not isinstance(nv, int) or nv <= v:
-                raise ConfigVersionError(
+                raise VersionError(
                     f"migration from version {v} did not advance the version"
                 )
             v = nv

@@ -12,7 +12,7 @@ from typing import Literal
 
 import pytest
 
-from mono_control.config import ConfigVersionError, VersionedModel
+from mono_control.base_models import VersionedModel, VersionError
 
 
 def _v1_to_v2(data: dict) -> dict:
@@ -49,12 +49,12 @@ def test_current_version_json_passes_through():
 
 
 def test_missing_version():
-    with pytest.raises(ConfigVersionError):
+    with pytest.raises(VersionError):
         Thing.load(json.loads('{"title": "hello"}'))
 
 
 def test_version_too_new():
-    with pytest.raises(ConfigVersionError):
+    with pytest.raises(VersionError):
         Thing.load(json.loads('{"version": 3, "title": "hello"}'))
 
 
@@ -65,7 +65,7 @@ def test_unmigratable_version():
         version: Literal[3] = 3
         title: str
 
-    with pytest.raises(ConfigVersionError):
+    with pytest.raises(VersionError):
         Gapped.load(json.loads(THING_V1_JSON))
 
 
@@ -76,5 +76,5 @@ def test_migration_must_advance():
         version: Literal[2] = 2
         title: str
 
-    with pytest.raises(ConfigVersionError):
+    with pytest.raises(VersionError):
         Stuck.load(json.loads(THING_V1_JSON))

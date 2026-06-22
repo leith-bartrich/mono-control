@@ -13,11 +13,13 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from ..base_models import VersionError
 from ..paths import REPOS_SUBDIR
 from .errors import (
     ConfigConflictError,
     ConfigNotFoundError,
     ConfigValidationError,
+    ConfigVersionError,
 )
 from .loader import _read_json
 from .models import Repo
@@ -53,6 +55,8 @@ class RepoStore:
         data = _read_json(self.path_for(slug))
         try:
             repo = Repo.load(data)
+        except VersionError as e:
+            raise ConfigVersionError(str(e)) from e
         except ValidationError as e:
             raise ConfigValidationError(
                 f"{self.path_for(slug)} failed validation:\n{e}"

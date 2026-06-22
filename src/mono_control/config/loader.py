@@ -13,8 +13,14 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from ..base_models import VersionError
 from ..paths import CONFIG_DIR, SYSTEM_FILE
-from .errors import ConfigNotFoundError, ConfigParseError, ConfigValidationError
+from .errors import (
+    ConfigNotFoundError,
+    ConfigParseError,
+    ConfigValidationError,
+    ConfigVersionError,
+)
 from .models import WorkspaceConfig
 
 
@@ -49,6 +55,8 @@ def load_config(config_dir: Path | None = None) -> WorkspaceConfig:
 
     try:
         return WorkspaceConfig.load(data)
+    except VersionError as e:
+        raise ConfigVersionError(str(e)) from e
     except ValidationError as e:
         raise ConfigValidationError(
             f"{config_dir / SYSTEM_FILE} failed validation:\n{e}"
