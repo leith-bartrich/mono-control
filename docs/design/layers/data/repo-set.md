@@ -54,5 +54,5 @@ a ladder of **per-verb preconditions** defined where each verb lives, not a
 property of the set. (Schema validity — does a stored set parse into its model —
 is the separate, universal pydantic concern.)
 
-A repo set is also the thing a [target](target.md) references when declaring a
+A repo set is also the thing a [layout-target](layout-target.md) references when declaring a
 desired state. Concrete fields are still TBD.

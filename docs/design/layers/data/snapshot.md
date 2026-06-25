@@ -3,7 +3,7 @@
 A **snapshot** is a *concrete state*: the exact, reproducible resolution of a set
 of [repos](repo.md) — each repo captured at both a specific **version and
 location** — plus provenance (when and how it was produced). Where a
-[target](target.md) says "where I want to be" (and may be loose), a snapshot
+[layout-target](layout-target.md) says "where I want to be" (and may be loose), a snapshot
 records "exactly where things are/were," and is always precise.
 
 A snapshot may arise two ways, with the same shape either way:
@@ -59,9 +59,9 @@ is *usable* is two separate questions, neither owned by the snapshot:
 ## Observation (not yet a rule)
 
 The snapshot is the concept that **gets serialized** — the durable, on-disk form
-of workspace state. A [target](target.md) can be **constructed from** a snapshot
+of workspace state. A [layout-target](layout-target.md) can be **constructed from** a snapshot
 (to return the workspace to that exact state). This is the inverse of the usual
-intuition: the concrete thing is what persists, while the desired thing (target)
+intuition: the concrete thing is what persists, while the desired thing (layout-target)
 may live only in memory.
 
 It is a JSON-serializable model that mono-control constructs and passes to

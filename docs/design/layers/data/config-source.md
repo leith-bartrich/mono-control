@@ -3,9 +3,11 @@
 The workspace configuration for `mono-control`, held in the `mono-config` repo.
 
 This document covers the *mechanism* of this source — how configuration is
-stored, located, and loaded. It does **not** describe the configuration
-abstractions themselves; each abstraction is documented in its own file in this
-directory (see [Document map](#document-map)).
+stored, located, and loaded. It does **not** describe the abstractions themselves.
+And note this source holds only the *configuration* abstractions
+([mono-project](mono-project.md), [repo](repo.md)); other data-layer abstractions
+(repo-set, layout-target, snapshot) live elsewhere — see the
+[data layer README](README.md) for where each lives.
 
 ## Source of truth: the mono-config repo
 
@@ -106,14 +108,14 @@ each document type subclasses it. Migrations are tested from static JSON fixture
 
 ## Document map
 
-This file is the *how* (the mechanism); the concept files are the *what* (the
-abstractions the configuration describes):
+This file is the *how* (the mechanism). The abstractions **this source actually
+holds** are:
 
-- **[README](README.md)** — the data layer overview and its index of sources.
-- **This file** — the configuration data source: storage, location, loading.
-- **Concept files** — one per abstraction:
-  - [mono-project.md](mono-project.md) — the whole workspace.
-  - [repo.md](repo.md) — an individual managed repository.
-  - [repo-set.md](repo-set.md) — a named subset of repos.
-  - [target.md](target.md) — a desired state.
-  - [snapshot.md](snapshot.md) — a concrete state.
+- [mono-project.md](mono-project.md) — workspace-level config.
+- [repo.md](repo.md) — an individual managed repository definition.
+
+Other data-layer abstractions are **not** in this config source — they live in
+product-cluster repos (via an [aspect](../repo-aspects/product-cluster.md)) or in
+memory. The [data layer README](README.md) is the full where-each-lives index,
+covering also [repo-set](repo-set.md), [layout-target](layout-target.md), and
+[snapshot](snapshot.md).

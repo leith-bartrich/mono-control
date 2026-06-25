@@ -1,0 +1,79 @@
+# Source engine
+
+The **source engine** brings repos into **local availability** so the
+[layout engine](../layout/README.md) has something to arrange. It is the only engine
+that **creates** a checkout — `absent → offline` by **clone** (from a remote source)
+or **init** (a brand-new repo with no remote yet) — and the only one that touches the
+**network** (clone/fetch, operating a repo's named [sources](../data/repo.md)).
+Created checkouts always land in `mono-repos-offline/<slug>`.
+
+## Input: a source request (not a target)
+
+The source engine's input is **not** a [layout-target](../data/layout-target.md). A
+target is a *convergent desired state* ("make the workspace exactly this", with
+`pre_clear` pruning). What the source engine is asked to do is **additive**: *ensure
+these repos and refs are available locally.* There's no exclusivity and no
+"un-acquire" — acquisition only ever adds availability. So its input is a **source
+request**: per repo, the **refs that must be locally present**.
+
+A source request is typically **derived from a layout-target** — its
+`branch-head` / `commit` desired states imply which refs each repo needs — but it is
+its own, simpler thing (a flat "make available" list), not a state to converge to.
+
+## What it does, per repo
+
+Additively and idempotently — re-running is always safe:
+
+1. **Resolve a source** — which named remote to use (the default-source convention
+   is still TBD).
+2. **absent locally → create** into `mono-repos-offline/<slug>` — **clone** the
+   source, or **init** a brand-new repo with no remote (where the stamps are applied
+   — see below).
+3. **already present** (offline or materialized) → **fetch** from the source to
+   refresh the requested refs.
+4. **Verify** the requested refs now exist; a missing source or ref fails *that
+   repo* — reported, **per-repo independent**, never half-failing the whole request.
+
+It only ever *adds* availability — create (clone/init) or refresh (fetch). It never
+**mats (places)** or **demats (retires)** a checkout — that's the
+[layout engine](../layout/README.md)'s job — and never pushes (the
+[publish engine](../publish/README.md)'s). Output: the requested repos + refs are
+present in offline (and any already-materialized checkouts have been fetched), ready
+for the layout engine.
+
+## Scope: inbound only
+
+**Clone and fetch (pulls) only — no push, no publish:**
+
+- Publishing local work is a **developer / CI** concern, done with their own git, not
+  a workspace-state operation. A state manager pushing on your behalf would be
+  surprising and risky.
+- The offline folder already removes the only internal reason to push (saving work
+  before removal — see the layout engine's non-destructive retire).
+
+Pushing state out is the [publish engine](../publish/README.md)'s reserved territory
+— a separate, explicit operation, never part of acquisition. Keeping this engine
+one-directional avoids the sprawl of a bidirectional sync.
+
+## Stamping lives here
+
+Because **clone** (and init) is the source engine's job, two stamps into the new
+checkout's `.git/config` are applied *here*, not by the
+[layout engine](../layout/README.md) (which only moves/checks-out already-stamped
+checkouts):
+
+- the host filesystem **FS-capability profile** (see
+  [host-platform](../../host-platform.md)), so later git behaves consistently; and
+- the repo's **identity** — its slug, written as `mono-control.slug` — so the
+  checkout is self-identifying and reverse-lookup (location → slug) needs no external
+  index (see [on-disk repo](../data/on-disk-repo.md)).
+
+## Orchestration
+
+A high-level command runs the source engine **first** (fulfill the source request —
+make the [layout-target](../data/layout-target.md)'s repos and needed refs local),
+then the [layout engine](../layout/README.md) (arrange the local layout). The
+layout-target is the shared origin: the source engine derives *what to acquire* from
+it, the layout engine reconciles *how to arrange* against it.
+
+Fetch policy, multi-source / default-source resolution, and auth are **TBD**.

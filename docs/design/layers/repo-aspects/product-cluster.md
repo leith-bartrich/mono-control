@@ -49,8 +49,10 @@ uniqueness/hash segment stripped). The slug remains the durable identity;
 `<name>` is just the human-facing subdir [alias](README.md). The exact derivation
 rule — and whether slugs carry a uniqueness suffix at all — is **TBD**.
 
-Materialization itself is a clone/checkout via the [git layer](../git/README.md)
-(host-correct stamping included), placed at that subdir.
+Materialization is two engine steps, not a single clone: the
+[source engine](../source/README.md) **acquires** the cluster into offline (clone or
+init, stamped), then the [layout engine](../layout/README.md) **places** it at that
+subdir. (The [git layer](../git/README.md) provides the primitives.)
 
 ## The manager (planned — the first real feature)
 
@@ -59,12 +61,16 @@ Its code lives in `src/mono_control/aspects/product_cluster/` and it is invoked 
 [aspect code & CLI layout](README.md)). The verbs:
 
 - **list-available** — the repos declaring the aspect, from config (no checkout).
-- **create / init / mark** — author a new cluster (init a repo, mark the aspect on
-  its [repo def](../data/repo.md)).
-- **materialize** — pull a declared cluster to `mono-repos/products/<name>`.
+- **init / mark** — bring a new cluster into being (init via the source engine) or
+  mark the aspect on an existing [repo def](../data/repo.md).
+- **mat** — get the cluster placed at `mono-repos/products/<name>`: the
+  [source engine](../source/README.md) acquires it into offline (if absent), then
+  the [layout engine](../layout/README.md) places it.
+- **demat** — retire the cluster (`products/<name>` → offline) via the layout
+  engine; non-destructive.
 
-This is the first feature to hook the [git layer](../git/README.md) (`clone` /
-`init`) into a real, user-facing workflow.
+This is the first feature to drive the [source](../source/README.md) +
+[layout](../layout/README.md) engines into a real, user-facing workflow.
 
 ## Observation (not yet a rule)
 - The cluster's internal schema (artifact-config format, snapshot storage) is

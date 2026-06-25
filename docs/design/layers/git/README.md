@@ -30,10 +30,13 @@ single chokepoint.
 ## Shape
 
 - **`GitRepo(path)`** — bound to an existing checkout: `current_commit()`
-  (`rev-parse HEAD`), `is_dirty()` (`status --porcelain`), `fetch()`,
-  `checkout(ref)`, `ahead_behind(ref)` (`rev-list --count`).
-- **Module-level operations** not bound to a checkout: `clone(url, dest, …)`,
-  `ls_remote(url, ref)` (used for resolvability — does the remote expose this ref).
+  (`rev-parse HEAD`), `is_dirty()` (`status --porcelain`), `slug()` (read the
+  `mono-control.slug` stamp), `fetch()`, `checkout(ref)`, `ahead_behind(ref)`
+  (`rev-list --count`).
+- **Module-level creation** — `clone(url, dest, *, profile, slug)` and
+  `init(dest, *, profile, slug)` create a checkout (into offline) and apply the
+  stamps below. Plus `ls_remote(url, ref)` (resolvability — does the remote expose
+  this ref).
 - **`_run_git([...], cwd=...)`** — the one subprocess chokepoint: list-form args
   (never a shell string), captured output, and exit-code → typed-error mapping.
   Everything else goes through it, so behavior and error handling stay uniform.
@@ -44,19 +47,37 @@ single chokepoint.
 The package will live at `mono_control/git/`. (Note: avoid a module literally named
 `platform.py` — it shadows the stdlib `platform` the shim uses to detect the host.)
 
-## The clone-stamp consistency contract
+## Stamps applied at clone/init
 
-A clone is the **consistency anchor**. When this layer clones a repo, it stamps
-the [filesystem-capability profile](../../host-platform.md) — `core.filemode`,
-`core.symlinks`, `core.ignorecase` — into the new repo's `.git/config`, chosen for
-the **host platform** the working tree lives on (supplied per the
-[host-platform contract](../../host-platform.md), never auto-detected by the
-container's git through a bind mount).
+When this layer **creates** a checkout — `clone` or `init` (always into offline) —
+it writes two stamps into the new checkout's `.git/config`, and **both are
+mandatory**: a checkout this layer creates is never left unstamped. (*Materializing*
+a repo — placing offline → a location — is a later filesystem **move** the
+[layout engine](../layout/README.md) does; it carries the stamps along and never
+re-stamps.)
 
-Because that config persists and is local to the checkout, every later git
-invocation on that tree — ours *or* a developer's native git on the same shared
-checkout — honors it. "Stamp once at clone, then let git handle it." We stamp only
-clones **we** create; a pre-existing checkout we adopt is respected as-is.
+- **Filesystem-capability profile** — `core.filemode` / `core.symlinks` /
+  `core.ignorecase`, chosen for the [host platform](../../host-platform.md) the
+  working tree lives on (supplied by the caller, never auto-detected through a bind
+  mount). This is the **consistency anchor**: because the config persists and is
+  local, every later git invocation on that tree — ours *or* a developer's native
+  git — honors it. "Stamp once at creation, then let git handle it."
+- **Identity — `mono-control.slug`** — the repo's [slug](../data/repo.md), so the
+  checkout is **self-identifying**. The location doesn't encode the slug, so this is
+  how reverse-lookup (location → slug) works (see
+  [on-disk repo](../data/on-disk-repo.md)). It goes in `.git/config`
+  precisely because that is **local and never pushed**.
+
+Both stamps are values the caller supplies (the host profile and the slug); this
+layer just applies them — it stays mechanical, knowing nothing of repo defs.
+
+**Dogmatically checked.** The slug stamp is an *invariant* of a managed checkout,
+not a hint: `clone`/`init` require a slug and verify it landed, and any operation
+that reads a managed checkout checks for `mono-control.slug` — **a checkout without
+it is foreign/unmanaged and is refused or excluded, never assumed.** We never
+operate on, move, or remove a tree we can't positively identify. We stamp only
+checkouts **we** create; adopting a pre-existing checkout means *explicitly*
+stamping it (assigning a slug), not silently trusting it.
 
 ## What stays out: content
 
@@ -87,10 +108,10 @@ Threads deliberately left open here, to be settled as the layer is built:
 
 - **Reconcile MVP scope** — whether the first reconcile runs against a loose
   "latest default branch" intent built from existing repo defs, or waits on the
-  [target](../data/target.md) and [repo-set](../data/repo-set.md) nouns.
+  [layout-target](../data/layout-target.md) and [repo-set](../data/repo-set.md) nouns.
 - **Resolution and the resolvability gate** — turning a loose/precise desired ref
   into a concrete commit, and checking it can be materialized now (does a source
-  expose the slug, does the commit still exist). See [target](../data/target.md)
+  expose the slug, does the commit still exist). See [layout-target](../data/layout-target.md)
   and [snapshot](../data/snapshot.md).
 - **A per-invocation `-c` backstop** — injecting normalized config on individual
   calls for repos we did *not* clone (and thus never stamped), in addition to the
@@ -102,4 +123,4 @@ Threads deliberately left open here, to be settled as the layer is built:
   filesystem-capability profile this layer applies at clone.
 - [data layer](../data/README.md) — supplies the repo defs (sources, branches,
   location) this layer is pointed at; in particular [repo](../data/repo.md),
-  [target](../data/target.md), and [snapshot](../data/snapshot.md).
+  [layout-target](../data/layout-target.md), and [snapshot](../data/snapshot.md).
