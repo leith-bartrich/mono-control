@@ -9,6 +9,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from mono_control.aspects import attach_aspect_commands
 from mono_control.config import ConfigError, RepoStore, load_config
 from mono_control.host_platform import require_valid as require_valid_host_platform
 from mono_control.paths import CONFIG_DIR, REPOS_DIR
@@ -25,6 +26,7 @@ app = typer.Typer(
 )
 app.add_typer(repo_app, name="repo")
 app.add_typer(config_app, name="config")
+attach_aspect_commands(app)
 console = Console()
 
 
