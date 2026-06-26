@@ -47,8 +47,12 @@ class GitRepo:
 
     def current_commit(self) -> str | None:
         """The commit HEAD points at, or ``None`` if there are no commits yet."""
+        return self.resolve_ref("HEAD")
+
+    def resolve_ref(self, ref: str) -> str | None:
+        """Return the commit ``ref`` resolves to locally, or ``None`` if it doesn't."""
         try:
-            return self._git("rev-parse", "HEAD")
+            return self._git("rev-parse", "--verify", f"{ref}^{{commit}}")
         except GitCommandError:
             return None
 
