@@ -1,17 +1,21 @@
 """mono-control git operations layer — the thin wrapper over the git CLI.
 
-Pure mechanism over paths and refs (see docs/design/layers/git/README.md). This
-pass covers the skeleton plus the two repo-creating operations, ``clone`` and
-``init``, both of which stamp the host filesystem-capability profile.
+Pure mechanism over paths and refs (see docs/design/layers/git/README.md). Both
+repo-creating operations (``clone``, ``init``) stamp the host filesystem
+profile + the repo's ``mono-control.slug`` identity; ``GitRepo`` exposes the
+inspection/local-action verbs (``slug``, ``is_dirty``, ``fetch``, ``checkout``,
+``ahead_behind``) the engines drive.
 """
 
-from .errors import GitCommandError, GitError
-from .repo import GitRepo, clone, init
+from .errors import GitCommandError, GitError, UnmanagedCheckoutError
+from .repo import GitRepo, clone, init, ls_remote
 
 __all__ = [
     "GitError",
     "GitCommandError",
+    "UnmanagedCheckoutError",
     "GitRepo",
     "clone",
     "init",
+    "ls_remote",
 ]

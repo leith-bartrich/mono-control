@@ -25,3 +25,13 @@ class GitCommandError(GitError):
         shown = " ".join(command)
         detail = f": {self.stderr}" if self.stderr else ""
         super().__init__(f"`{shown}` failed (exit {returncode}){detail}")
+
+
+class UnmanagedCheckoutError(GitError):
+    """A checkout is missing the ``mono-control.slug`` identity stamp.
+
+    The stamp is an *invariant* of a managed checkout: any tree we created we
+    stamped, so an unstamped tree is foreign — never assumed, never operated on.
+    Adopting a pre-existing checkout means *explicitly* stamping it (assigning a
+    slug), not silently trusting it.
+    """
