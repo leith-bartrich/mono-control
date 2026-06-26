@@ -12,7 +12,7 @@ grows.
 import re
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import field_serializer, field_validator
 
 from ..base_models import VersionedModel
 
@@ -41,6 +41,8 @@ class Repo(VersionedModel):
     ``sources`` and ``branches`` are named maps — conventions for what individual
     source/branch names *mean* (which source is "origin", which branch is "main"
     or "dev") are deferred. ``retired`` is the soft-delete tombstone flag.
+    ``aspects`` is the set of declared repo-aspect names (e.g. ``"product-cluster"``)
+    — enough for discovery from config alone, without checking the repo out.
     """
 
     CURRENT_VERSION = 1
@@ -50,6 +52,7 @@ class Repo(VersionedModel):
     sources: dict[str, str] = {}  # name -> url (named remotes)
     branches: dict[str, str] = {}  # name -> branch (named important branches)
     retired: bool = False
+    aspects: set[str] = set()  # declared repo-aspect names (e.g. "product-cluster")
 
     @field_validator("slug")
     @classmethod
@@ -59,3 +62,8 @@ class Repo(VersionedModel):
                 f"invalid slug {value!r}: must match {SLUG_PATTERN}"
             )
         return value
+
+    @field_serializer("aspects")
+    def _sort_aspects(self, value: set[str]) -> list[str]:
+        # Stable JSON output so committed repo defs don't churn between writes.
+        return sorted(value)

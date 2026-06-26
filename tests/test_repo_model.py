@@ -11,6 +11,31 @@ def test_minimal_repo():
     assert repo.sources == {}
     assert repo.branches == {}
     assert repo.retired is False
+    assert repo.aspects == set()
+
+
+def test_aspects_round_trip():
+    repo = Repo(
+        version=1,
+        slug="cluster",
+        name="Cluster",
+        aspects={"product-cluster"},
+    )
+    text = repo.model_dump_json()
+    # Serialized as a sorted list for stable on-disk output.
+    assert json.loads(text)["aspects"] == ["product-cluster"]
+    restored = Repo.load(json.loads(text))
+    assert restored.aspects == {"product-cluster"}
+
+
+def test_aspects_sorted_serialization():
+    repo = Repo(
+        version=1,
+        slug="multi",
+        name="Multi",
+        aspects={"zeta", "alpha", "mid"},
+    )
+    assert json.loads(repo.model_dump_json())["aspects"] == ["alpha", "mid", "zeta"]
 
 
 def test_named_maps():
