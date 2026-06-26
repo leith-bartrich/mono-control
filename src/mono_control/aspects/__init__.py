@@ -18,7 +18,8 @@ from .registry import (
     register,
 )
 
-# Aspects ship here. Increment 7 will add `product_cluster`.
+# Importing each aspect package triggers its top-level `register(...)` call.
+from . import product_cluster  # noqa: F401 — side-effect import
 
 __all__ = [
     "REGISTERED_ASPECTS",
