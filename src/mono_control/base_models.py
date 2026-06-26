@@ -1,7 +1,7 @@
 """Reusable pydantic base classes for versioned documents.
 
 The generic model machinery shared across domains (config ``Repo``, ``Snapshot``,
-``RepoSet``, …): a strict base that rejects unknown keys, and ``VersionedModel``'s
+…): a strict base that rejects unknown keys, and ``VersionedModel``'s
 migrate-up-then-validate engine.
 
 Versioning failures raise the **neutral** ``VersionError`` defined here — this

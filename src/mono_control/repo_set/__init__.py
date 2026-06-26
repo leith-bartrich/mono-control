@@ -1,19 +1,11 @@
-"""mono-control repo-set layer — named, enumerable subsets of repos.
+"""mono-control repo-set layer — the membership interface over repos.
 
-A repo set is the ``members()`` interface (``RepoSetLike``) resolved against the
-current config; both a persisted authored ``RepoSet`` and a snapshot projection
-satisfy it. See docs/design/layers/data/repo-set.md.
+A repo set is the ``members()`` interface (``RepoSetLike``); a bare repo-set is
+memory-only (projected from a product or a snapshot). The authored form is a
+*product* inside a product-cluster repo (TBD). See
+docs/design/layers/data/repo-set.md.
 """
 
-from .errors import RepoSetError, RepoSetValidationError, RepoSetVersionError
-from .models import RepoSet, RepoSetLike, load_repo_set, missing_members
+from .models import RepoSetLike, missing_members
 
-__all__ = [
-    "RepoSet",
-    "RepoSetLike",
-    "missing_members",
-    "load_repo_set",
-    "RepoSetError",
-    "RepoSetValidationError",
-    "RepoSetVersionError",
-]
+__all__ = ["RepoSetLike", "missing_members"]
