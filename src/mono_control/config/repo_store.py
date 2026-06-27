@@ -16,13 +16,14 @@ from pydantic import ValidationError
 from ..base_models import VersionError
 from ..paths import REPOS_SUBDIR
 from .errors import (
+    AmbiguousNameError,
     ConfigConflictError,
     ConfigNotFoundError,
     ConfigValidationError,
     ConfigVersionError,
 )
 from .loader import _read_json
-from .models import Repo
+from .models import Repo, slugify
 
 
 class RepoStore:
@@ -99,3 +100,39 @@ class RepoStore:
             self.path_for(slug).unlink()
         except FileNotFoundError as e:
             raise ConfigNotFoundError(f"repo {slug!r} not found") from e
+
+
+def resolve_repo(store: "RepoStore", query: str, *, slug_only: bool = False) -> Repo:
+    """Resolve ``query`` to a single ``Repo``: slug-first, then name fallback.
+
+    - ``slug_only=True`` → load by slug directly; raise ``ConfigNotFoundError``
+      on miss. Use this when the caller knows the input is a slug (e.g. when a
+      ``--slug`` flag was passed).
+    - Otherwise: try ``store.load(query)`` first; if it succeeds the slug
+      wins. If not, fall back to name lookup using *slugified comparison*
+      (case-insensitive, whitespace-normalized): match every repo whose
+      ``slugify(name)`` equals ``slugify(query)``. One match → return it; more
+      than one → ``AmbiguousNameError`` listing the candidate slugs; none →
+      ``ConfigNotFoundError``.
+
+    Slug-first means an explicit / legacy slug like ``"demo"`` still resolves
+    as a slug when stored as one, even though it isn't shaped like a
+    ``make_slug`` output.
+    """
+    if slug_only:
+        return store.load(query)
+    try:
+        return store.load(query)
+    except ConfigNotFoundError:
+        pass
+    needle = slugify(query)
+    matches: list[Repo] = []
+    for slug in store.list(include_retired=True):
+        repo = store.load(slug)
+        if slugify(repo.name) == needle:
+            matches.append(repo)
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise AmbiguousNameError(query, [r.slug for r in matches])
+    raise ConfigNotFoundError(f"no repo found for {query!r}")

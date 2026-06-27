@@ -8,7 +8,7 @@ the unit tests exercise.
 import questionary
 from rich.console import Console
 
-from mono_control.config import ConfigError, Repo, RepoStore
+from mono_control.config import ConfigError, Repo, RepoStore, make_slug
 
 console = Console()
 
@@ -31,14 +31,17 @@ def manage(store: RepoStore) -> None:
 
 
 def _add(store: RepoStore) -> None:
-    slug = (questionary.text("slug:").ask() or "").strip()
-    if not slug:
+    name = (questionary.text("name:").ask() or "").strip()
+    if not name:
         return
-    name = (questionary.text("display name:", default=slug).ask() or slug).strip()
+    slug_override = (
+        questionary.text("slug (blank = auto-derive from name):").ask() or ""
+    ).strip()
     try:
+        slug = slug_override if slug_override else make_slug(name, exists=store.exists)
         store.create(Repo(version=1, slug=slug, name=name))
         console.print(f"[green]created[/green] {slug}")
-    except (ConfigError, ValueError) as e:
+    except (ConfigError, ValueError, RuntimeError) as e:
         console.print(f"[red]error:[/red] {e}")
 
 

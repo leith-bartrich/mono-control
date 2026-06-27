@@ -50,7 +50,14 @@ def test_named_maps():
     assert repo.branches["dev"] == "develop"
 
 
-@pytest.mark.parametrize("bad", ["Demo", "-leading", "has space", "UPPER", ""])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "Demo", "-leading", "has space", "UPPER", "",
+        "with.dot",  # dots are no longer allowed in the slug pattern
+        "with_underscore",  # underscores either
+    ],
+)
 def test_invalid_slug_rejected(bad):
     with pytest.raises(ValueError):
         Repo(version=1, slug=bad, name="x")

@@ -1,15 +1,12 @@
 """``mproj control product-cluster <verb>`` — the first user-facing feature.
 
-Verbs:
+Thin shell over :mod:`mono_control.repo_ops`: the verbs that aren't
+aspect-specific (init, mat, demat) delegate to shared helpers; only
+``list-available`` and ``mark`` (and the aspect's default-subdir convention)
+live here. Composition, not inheritance.
 
-- ``list-available`` — show every repo def declaring the ``product-cluster``
-  aspect (cheap; no checkouts).
-- ``mark <slug>`` — add the ``product-cluster`` aspect to an existing repo def.
-- ``init <slug>`` — create a brand-new cluster repo def + init it into
-  offline via the source engine. Mat it separately once it has commits.
-- ``mat <slug>`` — place the cluster at ``mono-repos/products/<name>``,
-  driving source-then-layout engine.
-- ``demat <slug>`` — retire the cluster from its location back to offline.
+Lookup verbs accept ``<name_or_slug>`` and support ``--slug`` / ``-s`` to
+force slug-only lookup. ``init`` takes ``<name>`` and derives its slug.
 """
 
 from __future__ import annotations
@@ -18,17 +15,16 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from mono_control import paths
-from mono_control.config import ConfigConflictError, ConfigError, Repo, RepoStore
-from mono_control.engines import layout as layout_engine
-from mono_control.engines import source as source_engine
-from mono_control.host_platform import profile as host_profile
-from mono_control.layout_target import (
-    LayoutTarget,
-    LayoutTargetAbsent,
-    LayoutTargetPresentBranchHead,
+from mono_control import paths, repo_ops
+from mono_control.config import (
+    AmbiguousNameError,
+    ConfigConflictError,
+    ConfigError,
+    Repo,
+    RepoStore,
+    resolve_repo,
 )
-from mono_control.on_disk import scan
+from mono_control.host_platform import profile as host_profile
 
 from ..registry import discover_repos
 from .naming import default_subdir
@@ -36,8 +32,11 @@ from .naming import default_subdir
 ASPECT = "product-cluster"
 
 console = Console()
-
 app = typer.Typer(help="Manage product-cluster repos.", no_args_is_help=True)
+
+_SLUG_FLAG = typer.Option(
+    False, "--slug", "-s", help="Treat the argument as a slug; skip name fallback."
+)
 
 
 def _store(ctx: typer.Context) -> RepoStore:
@@ -49,26 +48,18 @@ def _fail(message: object) -> typer.Exit:
     return typer.Exit(code=1)
 
 
-def _status_color(status: str) -> str:
-    if status in {"ok", "cloned", "initialized", "fetched", "placed", "checked-out",
-                  "relocated", "retired", "satisfied"}:
-        return "green"
-    if status == "blocked":
-        return "yellow"
-    return "red"
+def _resolve(ctx: typer.Context, query: str, *, slug_only: bool) -> Repo:
+    try:
+        return resolve_repo(_store(ctx), query, slug_only=slug_only)
+    except (AmbiguousNameError, ConfigError) as e:
+        raise _fail(e)
 
 
-def _render_outcomes(title: str, outcomes: list) -> None:
-    if not outcomes:
-        return
-    table = Table(title=title, show_edge=False, box=None)
-    table.add_column("slug")
-    table.add_column("status")
-    table.add_column("summary")
-    for o in outcomes:
-        color = _status_color(o.status)
-        table.add_row(o.slug, f"[{color}]{o.status}[/{color}]", o.summary)
-    console.print(table)
+def _require_aspect(repo: Repo) -> None:
+    if ASPECT not in repo.aspects:
+        raise _fail(
+            f"repo {repo.slug!r} does not declare the {ASPECT} aspect; mark it first"
+        )
 
 
 @app.command("list-available")
@@ -85,50 +76,49 @@ def list_available(ctx: typer.Context) -> None:
 
 
 @app.command("mark")
-def mark(ctx: typer.Context, slug: str) -> None:
+def mark(
+    ctx: typer.Context,
+    name_or_slug: str,
+    slug_only: bool = _SLUG_FLAG,
+) -> None:
     """Add the product-cluster aspect to an existing repo def."""
-    store = _store(ctx)
+    repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
     try:
-        repo = store.load(slug)
+        newly = repo_ops.mark_aspect(repo.slug, ASPECT, repo_store=_store(ctx))
     except ConfigError as e:
         raise _fail(e)
-    if ASPECT in repo.aspects:
-        console.print(f"[yellow]already marked[/yellow] {slug}")
+    if not newly:
+        console.print(f"[yellow]already marked[/yellow] {repo.slug}")
         return
-    repo.aspects.add(ASPECT)
-    store.save(repo)
-    console.print(f"[green]marked[/green] {slug} as {ASPECT}")
+    console.print(f"[green]marked[/green] {repo.slug} as {ASPECT}")
 
 
 @app.command("init")
 def init(
     ctx: typer.Context,
-    slug: str,
-    name: str = typer.Option(
-        None, "--name", help="Display name for the new repo def (defaults to slug)."
+    name: str,
+    slug: str = typer.Option(
+        None,
+        "--slug",
+        help="Slug override (default: derived as `slugify(name)-<4 hex>`).",
     ),
 ) -> None:
     """Create a brand-new product-cluster repo def + init it into offline."""
     store = _store(ctx)
-    if store.exists(slug):
-        raise _fail(
-            f"repo {slug!r} already exists; use `mark` to add the aspect to an existing repo"
-        )
-    repo = Repo(version=1, slug=slug, name=name or slug, aspects={ASPECT})
     try:
-        store.create(repo)
+        resolved_slug, report = repo_ops.init(
+            name,
+            slug=slug,
+            aspects={ASPECT},
+            repo_store=store,
+            workspace_root=paths.REPOS_DIR,
+            offline_root=paths.OFFLINE_DIR,
+            profile=host_profile(),
+        )
     except (ConfigConflictError, ConfigError) as e:
         raise _fail(e)
-    # Run source engine: no sources declared → it will `git init` into offline.
-    inventory = scan(paths.REPOS_DIR, paths.OFFLINE_DIR)
-    report = source_engine.run(
-        source_engine.SourceRequest(refs_by_slug={slug: set()}),
-        repo_store=store,
-        inventory=inventory,
-        offline_root=paths.OFFLINE_DIR,
-        profile=host_profile(),
-    )
-    _render_outcomes(f"init {slug}", report.outcomes)
+    console.print(f"[green]created[/green] {resolved_slug}")
+    repo_ops.render_outcomes(f"init {resolved_slug}", report.outcomes, console=console)
     if not report.ok:
         raise typer.Exit(code=1)
 
@@ -136,80 +126,50 @@ def init(
 @app.command("mat")
 def mat(
     ctx: typer.Context,
-    slug: str,
+    name_or_slug: str,
     name: str = typer.Option(
         None,
         "--name",
-        help="Subdir under mono-repos/products/ (defaults to derived from slug).",
+        help="Subdir under mono-repos/products/ (default: slugified repo name).",
     ),
     branch: str = typer.Option(
         "main", "--branch", help="Which branch's head to check out."
     ),
+    slug_only: bool = _SLUG_FLAG,
 ) -> None:
-    """Place a product-cluster at mono-repos/products/<name>."""
-    store = _store(ctx)
-    try:
-        repo = store.load(slug)
-    except ConfigError as e:
-        raise _fail(e)
-    if ASPECT not in repo.aspects:
-        raise _fail(
-            f"repo {slug!r} does not declare the {ASPECT} aspect; mark it first"
-        )
-
-    subdir = name or default_subdir(slug)
-    target = LayoutTarget(
-        targets={
-            slug: LayoutTargetPresentBranchHead(
-                branch=branch, location=f"products/{subdir}"
-            ),
-        }
-    )
-
-    inventory = scan(paths.REPOS_DIR, paths.OFFLINE_DIR)
-    source_report = source_engine.run(
-        source_engine.from_layout_target(target),
-        repo_store=store,
-        inventory=inventory,
+    """Place a product-cluster at ``mono-repos/products/<name>``."""
+    repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
+    _require_aspect(repo)
+    location = f"products/{name or default_subdir(repo)}"
+    source_report, layout_report = repo_ops.materialize(
+        repo.slug,
+        location=location,
+        branch=branch,
+        repo_store=_store(ctx),
+        workspace_root=paths.REPOS_DIR,
         offline_root=paths.OFFLINE_DIR,
         profile=host_profile(),
     )
-    _render_outcomes("source", source_report.outcomes)
-
-    # Re-observe after acquisition so the layout engine sees the post-source state.
-    inventory = scan(paths.REPOS_DIR, paths.OFFLINE_DIR)
-    layout_report = layout_engine.run(
-        target,
-        inventory=inventory,
-        workspace_root=paths.REPOS_DIR,
-        offline_root=paths.OFFLINE_DIR,
-    )
-    _render_outcomes("layout", layout_report.outcomes)
+    repo_ops.render_outcomes("source", source_report.outcomes, console=console)
+    repo_ops.render_outcomes("layout", layout_report.outcomes, console=console)
     if not (source_report.ok and layout_report.ok):
         raise typer.Exit(code=1)
 
 
 @app.command("demat")
-def demat(ctx: typer.Context, slug: str) -> None:
+def demat(
+    ctx: typer.Context,
+    name_or_slug: str,
+    slug_only: bool = _SLUG_FLAG,
+) -> None:
     """Retire a product-cluster from its location back to offline."""
-    store = _store(ctx)
-    try:
-        repo = store.load(slug)
-    except ConfigError as e:
-        raise _fail(e)
-    if ASPECT not in repo.aspects:
-        raise _fail(
-            f"repo {slug!r} does not declare the {ASPECT} aspect; nothing to demat"
-        )
-
-    target = LayoutTarget(targets={slug: LayoutTargetAbsent()})
-    inventory = scan(paths.REPOS_DIR, paths.OFFLINE_DIR)
-    report = layout_engine.run(
-        target,
-        inventory=inventory,
+    repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
+    _require_aspect(repo)
+    report = repo_ops.dematerialize(
+        repo.slug,
         workspace_root=paths.REPOS_DIR,
         offline_root=paths.OFFLINE_DIR,
     )
-    _render_outcomes("layout", report.outcomes)
+    repo_ops.render_outcomes("layout", report.outcomes, console=console)
     if not report.ok:
         raise typer.Exit(code=1)

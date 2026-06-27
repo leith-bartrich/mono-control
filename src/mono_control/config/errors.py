@@ -27,3 +27,19 @@ class ConfigVersionError(ConfigError):
 
 class ConfigConflictError(ConfigError):
     """An attempt to create a config document that already exists."""
+
+
+class AmbiguousNameError(ConfigError):
+    """A name-or-slug lookup matched more than one repo by name.
+
+    Carries the input and the list of candidate slugs so the CLI can render a
+    helpful "matches: X, Y — pass --slug to disambiguate" message.
+    """
+
+    def __init__(self, query: str, candidate_slugs: list[str]) -> None:
+        self.query = query
+        self.candidate_slugs = candidate_slugs
+        joined = ", ".join(candidate_slugs)
+        super().__init__(
+            f"name {query!r} matches: {joined} — pass --slug to disambiguate"
+        )

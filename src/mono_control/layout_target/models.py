@@ -28,7 +28,7 @@ class LayoutTargetPresentCommit(StrictModel):
 
     kind: Literal["commit"] = "commit"
     commit: str
-    location: str  # subdir under mono-repos
+    location: str  # subdir under mono-repos — place/move the repo here if not already here
 
 
 class LayoutTargetPresentBranchHead(StrictModel):
@@ -36,7 +36,7 @@ class LayoutTargetPresentBranchHead(StrictModel):
 
     kind: Literal["branch-head"] = "branch-head"
     branch: str
-    location: str  # subdir under mono-repos
+    location: str  # subdir under mono-repos — place/move the repo here if not already here
 
 
 class LayoutTargetAbsent(StrictModel):

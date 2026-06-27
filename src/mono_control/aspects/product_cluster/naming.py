@@ -1,19 +1,18 @@
 """The product-cluster's default subdir name (mat target).
 
-Per docs/design/layers/repo-aspects/product-cluster.md, a cluster
-materializes by default at ``mono-repos/products/<name>`` where ``<name>``
-is a friendly local alias derived from the slug. The exact derivation rule
-("strip trailing uniqueness/hash segment") and whether slugs carry such a
-suffix at all are still TBD — for now the alias is the slug verbatim.
+Per docs/design/layers/repo-aspects/product-cluster.md, a cluster materializes
+by default at ``mono-repos/products/<name>`` where ``<name>`` is a friendly,
+**mutable** local alias derived from the repo's ``name`` field — not from its
+slug. This is intentional: the slug carries an immutable identity-uniqueness
+hash that doesn't belong in path names, and deriving from ``name`` means a
+``repo rename`` triggers a relocate at the next mat.
 """
 
 from __future__ import annotations
 
+from mono_control.config import Repo, slugify
 
-def default_subdir(slug: str) -> str:
-    """Return the default ``<name>`` under ``mono-repos/products/`` for ``slug``.
 
-    TBD: strip a trailing uniqueness/hash segment from the slug once the slug
-    convention is firm; for now, identity.
-    """
-    return slug
+def default_subdir(repo: Repo) -> str:
+    """Return the default ``<name>`` under ``mono-repos/products/`` for ``repo``."""
+    return slugify(repo.name)

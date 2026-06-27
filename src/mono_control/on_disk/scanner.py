@@ -55,15 +55,16 @@ def _observe(checkout: Path, state: str) -> OnDiskRepo | None:
 
 def scan(workspace_root: Path, offline_root: Path) -> OnDiskInventory:
     """Observe both roots and return an ``OnDiskInventory``."""
-    inventory = OnDiskInventory()
+    repos: dict[str, OnDiskRepo] = {}
+    unmanaged: list[Path] = []
     for root, state in ((workspace_root, "materialized"), (offline_root, "offline")):
         for checkout in _find_checkouts(root):
             observed = _observe(checkout, state)
             if observed is None:
-                inventory.unmanaged.append(checkout)
+                unmanaged.append(checkout)
                 continue
-            prior = inventory.repos.get(observed.slug)
+            prior = repos.get(observed.slug)
             if prior is not None:
                 raise DuplicateSlugError(observed.slug, prior.location, checkout)
-            inventory.repos[observed.slug] = observed
-    return inventory
+            repos[observed.slug] = observed
+    return OnDiskInventory(repos=repos, unmanaged=unmanaged)

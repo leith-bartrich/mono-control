@@ -289,6 +289,108 @@ def test_pre_clear_retires_extras(tmp_path):
     assert (offline / "beta" / ".git").is_dir()
 
 
+def test_race_aborted_when_slug_stamp_changes_under_us(tmp_path):
+    """Re-stamping the offline checkout between plan and execute → race-aborted."""
+    head = _origin(tmp_path / "origin")
+    workspace, offline = _workspace_roots(tmp_path)
+    clone(tmp_path / "origin", offline / "alpha", profile=PROFILE, slug="alpha")
+
+    inv = scan(workspace, offline)
+    # Simulate a race: someone re-stamps the offline checkout with a different slug.
+    run_git(["config", "mono-control.slug", "intruder"], cwd=offline / "alpha")
+
+    target = LayoutTarget(
+        targets={
+            "alpha": LayoutTargetPresentCommit(commit=head, location="alpha"),
+        }
+    )
+    report = run(
+        target,
+        inventory=inv,  # pre-race observation
+        workspace_root=workspace,
+        offline_root=offline,
+    )
+    outcome = report.outcomes[0]
+    assert outcome.status == "race-aborted"
+    assert "intruder" in outcome.summary or "slug mismatch" in outcome.summary
+    # Repo untouched (still in offline; nothing moved).
+    assert (offline / "alpha" / ".git").is_dir()
+    assert not (workspace / "alpha").exists()
+
+
+def test_partial_when_checkout_fails_after_move(tmp_path, monkeypatch):
+    """A checkout error after a successful move → status=partial (not failed)."""
+    head = _origin(tmp_path / "origin")
+    workspace, offline = _workspace_roots(tmp_path)
+    clone(tmp_path / "origin", offline / "alpha", profile=PROFILE, slug="alpha")
+
+    target = LayoutTarget(
+        targets={
+            "alpha": LayoutTargetPresentCommit(commit=head, location="alpha"),
+        }
+    )
+    # Force the post-move checkout to raise. We monkey-patch GitRepo.checkout
+    # to fail unconditionally; the move has already succeeded by then.
+    from mono_control.git import GitError
+    from mono_control.git import repo as repo_module
+
+    real_checkout = repo_module.GitRepo.checkout
+
+    def _failing_checkout(self, ref):
+        raise GitError("simulated post-move checkout failure")
+
+    monkeypatch.setattr(repo_module.GitRepo, "checkout", _failing_checkout)
+    try:
+        report = run(
+            target,
+            inventory=scan(workspace, offline),
+            workspace_root=workspace,
+            offline_root=offline,
+        )
+    finally:
+        monkeypatch.setattr(repo_module.GitRepo, "checkout", real_checkout)
+
+    outcome = report.outcomes[0]
+    assert outcome.status == "partial"
+    assert "placed" in outcome.summary and "checkout" in outcome.summary
+    # The move did happen — the checkout is at the target location.
+    assert (workspace / "alpha" / ".git").is_dir()
+    assert not (offline / "alpha").exists()
+
+
+def test_unexpected_exception_propagates(tmp_path, monkeypatch):
+    """Unknown exceptions are not silently swallowed — they reach the UI layer."""
+    head = _origin(tmp_path / "origin")
+    workspace, offline = _workspace_roots(tmp_path)
+    clone(tmp_path / "origin", offline / "alpha", profile=PROFILE, slug="alpha")
+
+    target = LayoutTarget(
+        targets={
+            "alpha": LayoutTargetPresentCommit(commit=head, location="alpha"),
+        }
+    )
+    # Inject a bug into a helper the engine calls. The engine must NOT swallow
+    # it as `failed`; it must propagate.
+    from mono_control.engines.layout import execute as execute_module
+
+    real_move = execute_module._move
+
+    def _buggy_move(src, dst):
+        raise ZeroDivisionError("simulated engine bug")
+
+    monkeypatch.setattr(execute_module, "_move", _buggy_move)
+    try:
+        with pytest.raises(ZeroDivisionError):
+            run(
+                target,
+                inventory=scan(workspace, offline),
+                workspace_root=workspace,
+                offline_root=offline,
+            )
+    finally:
+        monkeypatch.setattr(execute_module, "_move", real_move)
+
+
 def test_per_repo_independence_on_failure(tmp_path):
     head = _origin(tmp_path / "origin")
     workspace, offline = _workspace_roots(tmp_path)
@@ -312,6 +414,7 @@ def test_per_repo_independence_on_failure(tmp_path):
     )
     by_slug = {o.slug: o for o in report.outcomes}
     assert by_slug["alpha"].status == "placed"
-    assert by_slug["beta"].status == "failed"
+    # beta's destination became occupied → reported as a race, not a generic failure.
+    assert by_slug["beta"].status == "race-aborted"
     # alpha was placed successfully despite beta failing.
     assert (workspace / "alpha" / ".git").is_dir()

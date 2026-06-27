@@ -10,15 +10,68 @@ grows.
 """
 
 import re
-from typing import Literal
+import secrets
+from typing import Callable, Literal
 
 from pydantic import field_serializer, field_validator
 
 from ..base_models import VersionedModel
 
 # Filename-safe immutable slug: starts alphanumeric, then alphanumerics plus
-# `.`, `_`, `-`. Used as a repo's identity and as its `<slug>.json` filename.
-SLUG_PATTERN = r"^[a-z0-9][a-z0-9._-]*$"
+# `-`. Used as a repo's identity and as its `<slug>.json` filename. Matches
+# what `slugify()` produces (lowercase + digits + dashes only); dots are
+# reserved for a future ``name.slug`` disk-stamping convention.
+SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
+
+# A slug shaped like ``<name-part>-<4 hex digits>`` — i.e. one that looks like
+# ``make_slug()`` produced it. Useful UX heuristic (e.g. for help text); not
+# load-bearing in the lookup, which always tries slug first regardless.
+_HASH_LEN = 4
+SLUG_SHAPED_PATTERN = rf"^[a-z0-9][a-z0-9-]*-[0-9a-f]{{{_HASH_LEN}}}$"
+
+
+def slugify(text: str) -> str:
+    """Derive a filesystem-safe slug fragment from free-form ``text``.
+
+    Lowercase → whitespace runs to ``-`` → drop everything not in
+    ``[a-z0-9-]`` → collapse repeated ``-`` → strip leading ``-``. Raises
+    ``ValueError`` if the result is empty (no usable characters).
+    """
+    s = text.lower().strip()
+    s = re.sub(r"\s+", "-", s)
+    s = re.sub(r"[^a-z0-9-]", "", s)
+    s = re.sub(r"-{2,}", "-", s)
+    s = s.lstrip("-")
+    if not s:
+        raise ValueError(f"cannot derive a slug from {text!r}")
+    return s
+
+
+def make_slug(
+    name: str,
+    *,
+    exists: Callable[[str], bool],
+    max_retries: int = 5,
+) -> str:
+    """Build a unique slug for ``name``: ``slugify(name)-<4 hex chars>``.
+
+    Rehash up to ``max_retries`` times if ``exists(slug)`` is True; raise
+    ``RuntimeError`` after exhausting retries (astronomically unlikely with
+    a 65k hash space, but cap to keep this bounded).
+    """
+    stem = slugify(name)
+    for _ in range(max_retries):
+        slug = f"{stem}-{secrets.token_hex(_HASH_LEN // 2)}"
+        if not exists(slug):
+            return slug
+    raise RuntimeError(
+        f"could not produce a unique slug for {name!r} after {max_retries} attempts"
+    )
+
+
+def is_slug_shaped(s: str) -> bool:
+    """True iff ``s`` looks like a ``make_slug``-produced slug."""
+    return bool(re.match(SLUG_SHAPED_PATTERN, s))
 
 
 class WorkspaceConfig(VersionedModel):

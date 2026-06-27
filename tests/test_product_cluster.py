@@ -73,7 +73,10 @@ def test_mark_and_list_available(workspace):
 
 def test_init_creates_offline_repo_with_aspect(workspace):
     config_dir, _, offline_root = workspace
-    result = _invoke(["init", "fresh", "--name", "Fresh"], config_dir=config_dir)
+    # Pin the slug via --slug so we can assert against a known name.
+    result = _invoke(
+        ["init", "Fresh", "--slug", "fresh"], config_dir=config_dir
+    )
     assert result.exit_code == 0
 
     store = RepoStore.from_config_dir(config_dir)
@@ -85,12 +88,25 @@ def test_init_creates_offline_repo_with_aspect(workspace):
     assert GitRepo(offline_root / "fresh").slug() == "fresh"
 
 
+def test_init_derives_slug_from_name(workspace):
+    config_dir, _, offline_root = workspace
+    result = _invoke(["init", "My Cluster"], config_dir=config_dir)
+    assert result.exit_code == 0
+    slugs = RepoStore.from_config_dir(config_dir).list()
+    assert len(slugs) == 1
+    assert slugs[0].startswith("my-cluster-")
+    assert (offline_root / slugs[0] / ".git").is_dir()
+
+
 def test_init_refuses_existing_slug(workspace):
     config_dir, _, _ = workspace
     store = RepoStore.from_config_dir(config_dir)
     store.create(Repo(version=1, slug="taken", name="Taken"))
 
-    result = _invoke(["init", "taken"], config_dir=config_dir)
+    # Same explicit slug → conflict.
+    result = _invoke(
+        ["init", "Taken Two", "--slug", "taken"], config_dir=config_dir
+    )
     assert result.exit_code != 0
     assert "already exists" in result.output
 
@@ -116,10 +132,12 @@ def test_mat_demat_round_trip(workspace, tmp_path):
         ["mat", "cluster1", "--branch", "main"], config_dir=config_dir
     )
     assert mat_result.exit_code == 0, mat_result.output
-    placed = workspace_root / "products" / "cluster1"
+    # default_subdir derives from slugify(name): "Cluster 1" → "cluster-1".
+    placed = workspace_root / "products" / "cluster-1"
     assert (placed / ".git").is_dir()
     assert GitRepo(placed).slug() == "cluster1"
 
+    # Demat looks up by slug.
     demat_result = _invoke(["demat", "cluster1"], config_dir=config_dir)
     assert demat_result.exit_code == 0, demat_result.output
     assert not placed.exists()
