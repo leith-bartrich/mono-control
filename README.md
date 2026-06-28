@@ -8,6 +8,22 @@ the right repos exist in `mono-repos` at the right revisions, and reports on
 what's actually checked out. It does not build anything and does not look inside
 the repos it manages.
 
+## Use through the shim
+
+mono-control is a containerized **sub-component** of a larger system. The
+proper way to deploy and drive it is through its host-side shim,
+[**mono-control-shim**](https://github.com/leith-bartrich/mono-control-shim) —
+a small, dependency-free CLI (`mproj`) installed on your host. The shim
+locates your workspace, detects the host platform, and hands off into the
+mono-control container; you should not invoke this project directly in normal
+use. Install the shim and start with `mproj`.
+
+Technically you *can* run mono-control without the shim — its CLI
+(`mono-control <verb>`) is a normal Python entrypoint and works fine inside
+the container's terminal once the container is up. That path exists for
+testing, debugging, and unusual integrations; it's not the recommended
+deployment.
+
 ## What it does
 
 - Reads the workspace configuration from `mono-config`.
