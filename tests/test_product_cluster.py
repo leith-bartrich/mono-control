@@ -111,8 +111,8 @@ def test_init_refuses_existing_slug(workspace):
     assert "already exists" in result.output
 
 
-def test_mat_demat_round_trip(workspace, tmp_path):
-    """End-to-end: mat clones into offline, places it; demat retires it back."""
+def test_mat_moveto_then_demat_round_trip(workspace, tmp_path):
+    """moveto places at the default products/<subdir>; demat retires it back."""
     config_dir, workspace_root, offline_root = workspace
     origin = tmp_path / "origin"
     _origin(origin, branch="main")
@@ -128,32 +128,29 @@ def test_mat_demat_round_trip(workspace, tmp_path):
         )
     )
 
-    mat_result = _invoke(
-        ["mat", "cluster1", "--branch", "main"], config_dir=config_dir
-    )
+    mat_result = _invoke(["mat", "moveto", "cluster1"], config_dir=config_dir)
     assert mat_result.exit_code == 0, mat_result.output
     # default_subdir derives from slugify(name): "Cluster 1" → "cluster-1".
     placed = workspace_root / "products" / "cluster-1"
     assert (placed / ".git").is_dir()
     assert GitRepo(placed).slug() == "cluster1"
 
-    # Demat looks up by slug.
     demat_result = _invoke(["demat", "cluster1"], config_dir=config_dir)
     assert demat_result.exit_code == 0, demat_result.output
     assert not placed.exists()
     assert (offline_root / "cluster1" / ".git").is_dir()
 
 
-def test_mat_refuses_unmarked_repo(workspace):
+def test_mat_moveto_refuses_unmarked_repo(workspace):
     config_dir, _, _ = workspace
     store = RepoStore.from_config_dir(config_dir)
     store.create(Repo(version=1, slug="plain", name="Plain"))
-    result = _invoke(["mat", "plain"], config_dir=config_dir)
+    result = _invoke(["mat", "moveto", "plain"], config_dir=config_dir)
     assert result.exit_code != 0
     assert "does not declare" in result.output
 
 
-def test_mat_uses_custom_name_subdir(workspace, tmp_path):
+def test_mat_moveto_with_subdir_override(workspace, tmp_path):
     config_dir, workspace_root, _ = workspace
     origin = tmp_path / "origin"
     _origin(origin, branch="main")
@@ -169,11 +166,66 @@ def test_mat_uses_custom_name_subdir(workspace, tmp_path):
     )
 
     result = _invoke(
-        ["mat", "cluster2", "--name", "friendly", "--branch", "main"],
-        config_dir=config_dir,
+        ["mat", "moveto", "cluster2", "friendly"], config_dir=config_dir
     )
     assert result.exit_code == 0, result.output
     assert (workspace_root / "products" / "friendly" / ".git").is_dir()
+
+
+def test_mat_branchat_blocks_on_unplaced_cluster(workspace, tmp_path):
+    config_dir, _, _ = workspace
+    origin = tmp_path / "origin"
+    _origin(origin, branch="main")
+    store = RepoStore.from_config_dir(config_dir)
+    store.create(
+        Repo(
+            version=1,
+            slug="cluster3",
+            name="Cluster Three",
+            sources={"origin": str(origin)},
+            aspects={"product-cluster"},
+        )
+    )
+    result = _invoke(
+        ["mat", "branchat", "cluster3", "main"], config_dir=config_dir
+    )
+    assert result.exit_code != 0
+    assert "moveto" in result.output
+
+
+def test_mat_layout_target_declarative(workspace, tmp_path):
+    config_dir, workspace_root, _ = workspace
+    origin = tmp_path / "origin"
+    _origin(origin, branch="main")
+    store = RepoStore.from_config_dir(config_dir)
+    store.create(
+        Repo(
+            version=1,
+            slug="cluster4",
+            name="Cluster Four",
+            sources={"origin": str(origin)},
+            aspects={"product-cluster"},
+        )
+    )
+    result = _invoke(
+        ["mat", "layout-target", "cluster4", "--branch", "main"],
+        config_dir=config_dir,
+    )
+    assert result.exit_code == 0, result.output
+    assert (workspace_root / "products" / "cluster-four" / ".git").is_dir()
+
+
+def test_mat_branchat_rejects_unknown_sub_intent(workspace):
+    config_dir, _, _ = workspace
+    store = RepoStore.from_config_dir(config_dir)
+    store.create(
+        Repo(version=1, slug="c5", name="c5", aspects={"product-cluster"})
+    )
+    result = _invoke(
+        ["mat", "branchat", "c5", "main", "tip"], config_dir=config_dir
+    )
+    assert result.exit_code != 0
+    assert "unsupported sub-intent" in result.output
 
 
 def test_aspect_is_registered_top_level():

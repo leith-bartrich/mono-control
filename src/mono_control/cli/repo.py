@@ -26,6 +26,14 @@ from mono_control.config import (
     resolve_repo,
 )
 from mono_control.host_platform import profile as host_profile
+from mono_control.layout_target import (
+    LayoutTarget,
+    LayoutTargetAbsent,
+    LayoutTargetPresentAsIs,
+    LayoutTargetPresentBranchHead,
+    LayoutTargetPresentCommit,
+)
+from mono_control.on_disk import scan
 
 console = Console()
 
@@ -337,26 +345,21 @@ def init_cmd(
         raise typer.Exit(code=1)
 
 
-@repo_app.command("mat")
-def mat_cmd(
-    ctx: typer.Context,
-    name_or_slug: str,
-    location: str = typer.Option(
-        ...,
-        "--location",
-        help="Subdir under mono-repos where the repo should be placed.",
-    ),
-    branch: str = typer.Option(
-        "main", "--branch", help="Branch whose head to check out."
-    ),
-    slug_only: bool = _SLUG_FLAG,
-) -> None:
-    """Place a repo at ``mono-repos/<location>`` (source → layout)."""
-    repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
-    source_report, layout_report = repo_ops.materialize(
-        repo.slug,
-        location=location,
-        branch=branch,
+# --------------------------------------------------------------------------- #
+# `repo mat <intent>` — intent-verb subcommands
+# --------------------------------------------------------------------------- #
+
+mat_app = typer.Typer(
+    help="Bring/keep a repo on disk. Sub-intents: moveto / branchat / commit / layout-target.",
+    no_args_is_help=True,
+)
+repo_app.add_typer(mat_app, name="mat")
+
+
+def _apply_and_exit(ctx: typer.Context, target: LayoutTarget) -> None:
+    """Run apply_target with the standard render-and-exit-on-failure pattern."""
+    source_report, layout_report = repo_ops.apply_target(
+        target,
         repo_store=_store(ctx),
         workspace_root=paths.REPOS_DIR,
         offline_root=paths.OFFLINE_DIR,
@@ -368,6 +371,133 @@ def mat_cmd(
         raise typer.Exit(code=1)
 
 
+def _observed_materialized_location(repo: Repo) -> str:
+    """Return ``repo``'s currently materialized subdir (relative to REPOS_DIR).
+
+    Errors out if the repo isn't materialized — the user should ``moveto``
+    first (or use ``layout-target`` to combine placement and ref intent).
+    """
+    inv = scan(paths.REPOS_DIR, paths.OFFLINE_DIR)
+    observed = inv.repos.get(repo.slug)
+    if observed is None:
+        _fail(
+            f"{repo.slug!r} is not on disk; use `mat moveto` to place it first, "
+            f"or `mat layout-target` to place and check out in one command"
+        )
+    if observed.state != "materialized":
+        _fail(
+            f"{repo.slug!r} is offline; use `mat moveto` to place it first, "
+            f"or `mat layout-target` to place and check out in one command"
+        )
+    try:
+        return str(observed.location.relative_to(paths.REPOS_DIR))
+    except ValueError:
+        _fail(
+            f"{repo.slug!r} is materialized at {observed.location}, which is not "
+            f"under the workspace root {paths.REPOS_DIR}"
+        )
+
+
+def _validate_branchat_sub(value: str) -> str:
+    if value != "head":
+        raise typer.BadParameter(
+            f"unsupported sub-intent {value!r}; only 'head' is implemented"
+        )
+    return value
+
+
+def _validate_commit_sub(value: str) -> str:
+    if value != "detached":
+        raise typer.BadParameter(
+            f"unsupported sub-intent {value!r}; only 'detached' is implemented"
+        )
+    return value
+
+
+@mat_app.command("moveto")
+def mat_moveto(
+    ctx: typer.Context,
+    name_or_slug: str,
+    relpath: str,
+    slug_only: bool = _SLUG_FLAG,
+) -> None:
+    """Place a repo at ``mono-repos/<relpath>`` without touching the ref."""
+    repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
+    target = LayoutTarget(
+        targets={repo.slug: LayoutTargetPresentAsIs(location=relpath)}
+    )
+    _apply_and_exit(ctx, target)
+
+
+@mat_app.command("branchat")
+def mat_branchat(
+    ctx: typer.Context,
+    name_or_slug: str,
+    branch: str,
+    sub_intent: str = typer.Argument("head", callback=_validate_branchat_sub),
+    slug_only: bool = _SLUG_FLAG,
+) -> None:
+    """Check out a branch's head at the repo's current location."""
+    repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
+    location = _observed_materialized_location(repo)
+    target = LayoutTarget(
+        targets={
+            repo.slug: LayoutTargetPresentBranchHead(branch=branch, location=location),
+        }
+    )
+    _apply_and_exit(ctx, target)
+    del sub_intent  # reserved-grammar token; only "head" is supported today
+
+
+@mat_app.command("commit")
+def mat_commit(
+    ctx: typer.Context,
+    name_or_slug: str,
+    commit: str,
+    sub_intent: str = typer.Argument("detached", callback=_validate_commit_sub),
+    slug_only: bool = _SLUG_FLAG,
+) -> None:
+    """Check out a specific commit (detached HEAD) at the repo's current location."""
+    repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
+    location = _observed_materialized_location(repo)
+    target = LayoutTarget(
+        targets={
+            repo.slug: LayoutTargetPresentCommit(commit=commit, location=location),
+        }
+    )
+    _apply_and_exit(ctx, target)
+    del sub_intent
+
+
+@mat_app.command("layout-target")
+def mat_layout_target(
+    ctx: typer.Context,
+    name_or_slug: str,
+    location: str = typer.Option(
+        ..., "--location", help="Subdir under mono-repos."
+    ),
+    branch: str = typer.Option(
+        None, "--branch", help="Branch whose head to check out (mutually exclusive with --commit)."
+    ),
+    commit: str = typer.Option(
+        None, "--commit", help="Specific commit to check out (mutually exclusive with --branch)."
+    ),
+    slug_only: bool = _SLUG_FLAG,
+) -> None:
+    """Declarative one-liner: place + (optionally) check out a ref."""
+    if branch and commit:
+        _fail("--branch and --commit are mutually exclusive")
+    repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
+    if branch:
+        desired = LayoutTargetPresentBranchHead(branch=branch, location=location)
+    elif commit:
+        desired = LayoutTargetPresentCommit(commit=commit, location=location)
+    else:
+        desired = LayoutTargetPresentAsIs(location=location)
+    target = LayoutTarget(targets={repo.slug: desired})
+    _apply_and_exit(ctx, target)
+
+
 @repo_app.command("demat")
 def demat_cmd(
     ctx: typer.Context,
@@ -376,11 +506,5 @@ def demat_cmd(
 ) -> None:
     """Retire a repo from its location back to offline (layout only)."""
     repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
-    report = repo_ops.dematerialize(
-        repo.slug,
-        workspace_root=paths.REPOS_DIR,
-        offline_root=paths.OFFLINE_DIR,
-    )
-    repo_ops.render_outcomes("layout", report.outcomes, console=console)
-    if not report.ok:
-        raise typer.Exit(code=1)
+    target = LayoutTarget(targets={repo.slug: LayoutTargetAbsent()})
+    _apply_and_exit(ctx, target)

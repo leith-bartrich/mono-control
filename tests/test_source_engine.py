@@ -203,15 +203,19 @@ def test_ref_missing_after_clone(tmp_path):
 
 
 def test_from_layout_target_derives_refs():
+    from mono_control.layout_target import LayoutTargetPresentAsIs
+
     target = LayoutTarget(
         targets={
             "alpha": LayoutTargetPresentCommit(commit="a" * 40, location="alpha"),
             "beta": LayoutTargetPresentBranchHead(branch="main", location="beta"),
             "gamma": LayoutTargetAbsent(),
+            "delta": LayoutTargetPresentAsIs(location="apps/delta"),
         }
     )
     req = from_layout_target(target)
     assert req.refs_by_slug == {
         "alpha": {"a" * 40},
         "beta": {"refs/heads/main"},
+        "delta": set(),  # present-as-is → empty ref set (acquire if absent, no verify)
     }

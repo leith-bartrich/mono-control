@@ -9,6 +9,7 @@ from mono_control.host_platform import FsProfile
 from mono_control.layout_target import (
     LayoutTarget,
     LayoutTargetAbsent,
+    LayoutTargetPresentAsIs,
     LayoutTargetPresentBranchHead,
     LayoutTargetPresentCommit,
 )
@@ -389,6 +390,98 @@ def test_unexpected_exception_propagates(tmp_path, monkeypatch):
             )
     finally:
         monkeypatch.setattr(execute_module, "_move", real_move)
+
+
+def test_present_as_is_places_without_checkout(tmp_path):
+    """moveto-style: place offline → location, HEAD unchanged."""
+    origin = tmp_path / "origin"
+    first = _origin(origin)
+    second = _commit_more(origin, "second.txt")
+
+    workspace, offline = _workspace_roots(tmp_path)
+    # Clone (HEAD = second), then move HEAD back to first so we can detect a
+    # checkout if one happens incorrectly.
+    repo = clone(origin, offline / "alpha", profile=PROFILE, slug="alpha")
+    run_git(["checkout", first], cwd=repo.path)
+
+    target = LayoutTarget(
+        targets={"alpha": LayoutTargetPresentAsIs(location="alpha")}
+    )
+    report = run(
+        target,
+        inventory=scan(workspace, offline),
+        workspace_root=workspace,
+        offline_root=offline,
+    )
+
+    assert report.ok
+    assert report.outcomes[0].status == "placed"
+    placed = workspace / "alpha"
+    assert (placed / ".git").is_dir()
+    # HEAD is preserved (still at `first`); no checkout was performed.
+    from mono_control.git import GitRepo
+
+    assert GitRepo(placed).current_commit() == first
+    del second  # unused; only existed to advance HEAD via the clone
+
+
+def test_present_as_is_relocate_no_checkout(tmp_path):
+    """moveto-style: relocate without changing HEAD."""
+    origin = tmp_path / "origin"
+    first = _origin(origin)
+    workspace, offline = _workspace_roots(tmp_path)
+    clone(origin, workspace / "old", profile=PROFILE, slug="alpha")
+
+    target = LayoutTarget(
+        targets={"alpha": LayoutTargetPresentAsIs(location="new")}
+    )
+    report = run(
+        target,
+        inventory=scan(workspace, offline),
+        workspace_root=workspace,
+        offline_root=offline,
+    )
+
+    assert report.outcomes[0].status == "relocated"
+    assert not (workspace / "old").exists()
+    assert (workspace / "new" / ".git").is_dir()
+    from mono_control.git import GitRepo
+
+    assert GitRepo(workspace / "new").current_commit() == first
+
+
+def test_present_as_is_satisfied_when_at_location(tmp_path):
+    """moveto-style: already at target location → no-op."""
+    _origin(tmp_path / "origin")
+    workspace, offline = _workspace_roots(tmp_path)
+    clone(tmp_path / "origin", workspace / "alpha", profile=PROFILE, slug="alpha")
+
+    target = LayoutTarget(
+        targets={"alpha": LayoutTargetPresentAsIs(location="alpha")}
+    )
+    report = run(
+        target,
+        inventory=scan(workspace, offline),
+        workspace_root=workspace,
+        offline_root=offline,
+    )
+    assert report.outcomes[0].status == "satisfied"
+
+
+def test_present_as_is_blocked_when_absent(tmp_path):
+    """moveto-style: absent → blocked; source engine must acquire first."""
+    workspace, offline = _workspace_roots(tmp_path)
+    target = LayoutTarget(
+        targets={"alpha": LayoutTargetPresentAsIs(location="alpha")}
+    )
+    report = run(
+        target,
+        inventory=scan(workspace, offline),
+        workspace_root=workspace,
+        offline_root=offline,
+    )
+    assert report.outcomes[0].status == "blocked"
+    assert "absent" in report.outcomes[0].summary
 
 
 def test_per_repo_independence_on_failure(tmp_path):

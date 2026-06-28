@@ -11,17 +11,15 @@ is "call ``init`` here then ``mark_aspect`` here," not "subclass a template."
 """
 
 from .operations import (
-    dematerialize,
+    apply_target,
     init,
     mark_aspect,
-    materialize,
 )
 from .render import render_outcomes, status_color
 
 __all__ = [
     "init",
-    "materialize",
-    "dematerialize",
+    "apply_target",
     "mark_aspect",
     "render_outcomes",
     "status_color",

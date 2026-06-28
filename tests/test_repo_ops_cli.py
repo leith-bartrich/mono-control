@@ -82,7 +82,8 @@ def test_repo_init_refuses_existing_slug(workspace):
     assert "already exists" in result.output
 
 
-def test_repo_mat_demat_round_trip(workspace, tmp_path):
+def test_repo_mat_moveto_then_branchat_then_demat(workspace, tmp_path):
+    """End-to-end intent sequence: place, then check out a branch, then retire."""
     config_dir, workspace_root, offline_root = workspace
     origin = tmp_path / "origin"
     _origin(origin)
@@ -97,28 +98,93 @@ def test_repo_mat_demat_round_trip(workspace, tmp_path):
         )
     )
 
-    # Lookup by slug works.
-    mat_result = _run(
-        config_dir, "repo", "mat", "opaque",
-        "--location", "apps/web", "--branch", "main",
+    # 1) moveto — pure placement, no ref opinion. Since the repo is absent
+    # locally, source engine clones it into offline first.
+    moveto_result = _run(
+        config_dir, "repo", "mat", "moveto", "opaque", "apps/web"
     )
-    assert mat_result.exit_code == 0, mat_result.output
+    assert moveto_result.exit_code == 0, moveto_result.output
     placed = workspace_root / "apps" / "web"
     assert (placed / ".git").is_dir()
     assert GitRepo(placed).slug() == "opaque"
 
-    # Lookup by name (slugified) works too for demat.
+    # 2) branchat — change the ref at the current location.
+    branchat_result = _run(
+        config_dir, "repo", "mat", "branchat", "opaque", "main"
+    )
+    assert branchat_result.exit_code == 0, branchat_result.output
+
+    # 3) demat — retire via name lookup (slugified comparison).
     demat_result = _run(config_dir, "repo", "demat", "Opaque")
     assert demat_result.exit_code == 0, demat_result.output
     assert not placed.exists()
     assert (offline_root / "opaque" / ".git").is_dir()
 
 
-def test_repo_mat_requires_location(workspace):
-    """Generic mat has no default subdir — the user must name one."""
+def test_repo_mat_branchat_blocks_when_not_materialized(workspace):
+    """branchat needs an observed location; refuses when the repo isn't placed."""
     config_dir, _, _ = workspace
-    # Need a repo to lookup; this fails at param parse before lookup though.
-    result = _run(config_dir, "repo", "mat", "anything")
+    store = RepoStore.from_config_dir(config_dir)
+    store.create(Repo(version=1, slug="opaque", name="Opaque"))
+    # No mat happened, so opaque is absent → branchat should error.
+    result = _run(config_dir, "repo", "mat", "branchat", "opaque", "main")
     assert result.exit_code != 0
-    # Typer's missing-required-option message.
-    assert "Missing option" in result.output or "missing" in result.output.lower()
+    assert "moveto" in result.output  # the error hints at the right next step
+
+
+def test_repo_mat_branchat_rejects_unknown_sub_intent(workspace):
+    """The reserved-grammar slot only accepts 'head' today."""
+    config_dir, _, _ = workspace
+    store = RepoStore.from_config_dir(config_dir)
+    store.create(Repo(version=1, slug="opaque", name="Opaque"))
+    result = _run(
+        config_dir, "repo", "mat", "branchat", "opaque", "main", "tip"
+    )
+    assert result.exit_code != 0
+    assert "unsupported sub-intent" in result.output
+
+
+def test_repo_mat_commit_rejects_unknown_sub_intent(workspace):
+    """commit's reserved-grammar slot only accepts 'detached' today."""
+    config_dir, _, _ = workspace
+    store = RepoStore.from_config_dir(config_dir)
+    store.create(Repo(version=1, slug="opaque", name="Opaque"))
+    result = _run(
+        config_dir, "repo", "mat", "commit", "opaque", "abc1234", "attached"
+    )
+    assert result.exit_code != 0
+    assert "unsupported sub-intent" in result.output
+
+
+def test_repo_mat_layout_target_declarative(workspace, tmp_path):
+    """The declarative one-liner combines placement + ref intent."""
+    config_dir, workspace_root, _ = workspace
+    origin = tmp_path / "origin"
+    _origin(origin)
+    store = RepoStore.from_config_dir(config_dir)
+    store.create(
+        Repo(
+            version=1,
+            slug="opaque",
+            name="Opaque",
+            sources={"origin": str(origin)},
+        )
+    )
+    result = _run(
+        config_dir, "repo", "mat", "layout-target", "opaque",
+        "--location", "apps/web", "--branch", "main",
+    )
+    assert result.exit_code == 0, result.output
+    assert (workspace_root / "apps" / "web" / ".git").is_dir()
+
+
+def test_repo_mat_layout_target_rejects_branch_and_commit_together(workspace):
+    config_dir, _, _ = workspace
+    store = RepoStore.from_config_dir(config_dir)
+    store.create(Repo(version=1, slug="opaque", name="Opaque"))
+    result = _run(
+        config_dir, "repo", "mat", "layout-target", "opaque",
+        "--location", "x", "--branch", "main", "--commit", "abc1234",
+    )
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output

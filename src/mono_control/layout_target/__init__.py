@@ -12,6 +12,7 @@ from .models import (
     DesiredState,
     LayoutTarget,
     LayoutTargetAbsent,
+    LayoutTargetPresentAsIs,
     LayoutTargetPresentBranchHead,
     LayoutTargetPresentCommit,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "DesiredState",
     "LayoutTarget",
     "LayoutTargetAbsent",
+    "LayoutTargetPresentAsIs",
     "LayoutTargetPresentBranchHead",
     "LayoutTargetPresentCommit",
 ]

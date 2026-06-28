@@ -1,12 +1,21 @@
 """The layout-target model: per-slug discriminated desired state.
 
-Each member repo's desired state is one of three discriminated kinds:
+Each member repo's desired state is one of four discriminated kinds:
 
-- ``commit`` — pinned to a precise commit (also names the desired location);
-- ``branch-head`` — the head of a named branch (resolved at execution; the
-  smarts of *which* branch live with the constructor — the engine only ever
-  sees ``branch-head(name)``);
+- ``commit`` — present at a location, pinned to a precise commit
+  (placement + ref intent in one);
+- ``branch-head`` — present at a location, tracking the head of a named
+  branch (placement + ref intent in one);
+- ``present-as-is`` — present at a location, **no opinion on the current
+  ref** (placement only — the engine will place/move but never check out);
 - ``absent`` — the repo should not be materialized.
+
+Placement and ref intent are *orthogonal*. The three present kinds let
+callers express either facet (or both): ``present-as-is`` is "I care
+where, not what's checked out"; ``commit`` / ``branch-head`` are "I care
+about both." Verbs typically express one facet at a time
+(``mat moveto`` / ``mat branchat`` / ``mat commit``); the declarative
+``layout-target`` verb combines them.
 
 The layout-target itself carries the ``pre_clear`` exclusivity flag and the
 ``{slug -> DesiredState}`` map. Not a ``VersionedModel`` — layout-targets are
@@ -39,6 +48,18 @@ class LayoutTargetPresentBranchHead(StrictModel):
     location: str  # subdir under mono-repos — place/move the repo here if not already here
 
 
+class LayoutTargetPresentAsIs(StrictModel):
+    """Present at a specific location with no opinion on the current ref.
+
+    The engine will place (offline → location) or relocate (location →
+    location) as needed, but will **not** check out anything. The repo's
+    on-disk HEAD is preserved through the move.
+    """
+
+    kind: Literal["present-as-is"] = "present-as-is"
+    location: str  # subdir under mono-repos — place/move the repo here if not already here
+
+
 class LayoutTargetAbsent(StrictModel):
     """Declare a repo should not be materialized."""
 
@@ -49,6 +70,7 @@ DesiredState = Annotated[
     Union[
         LayoutTargetPresentCommit,
         LayoutTargetPresentBranchHead,
+        LayoutTargetPresentAsIs,
         LayoutTargetAbsent,
     ],
     Field(discriminator="kind"),

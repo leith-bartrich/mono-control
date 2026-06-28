@@ -17,6 +17,7 @@ from ...layout_target import (
     DesiredState,
     LayoutTarget,
     LayoutTargetAbsent,
+    LayoutTargetPresentAsIs,
     LayoutTargetPresentBranchHead,
     LayoutTargetPresentCommit,
 )
@@ -179,6 +180,63 @@ def _plan_present(
     )
 
 
+def _plan_present_as_is(
+    slug: str,
+    observed: OnDiskRepo | None,
+    desired: LayoutTargetPresentAsIs,
+    *,
+    workspace_root: Path,
+) -> PlanItem:
+    """Plan a placement-only desired state — no ref change ever.
+
+    Pure placement: ``resolved_commit`` stays ``None`` so the execute stage
+    moves the checkout but skips the post-move checkout. No dirty gate is
+    needed (a move preserves working-tree state).
+    """
+    target_location = workspace_root / desired.location
+
+    if observed is None:
+        return PlanItem(
+            slug=slug,
+            observed=None,
+            desired=desired,
+            classification="blocked",
+            action="none",
+            target_location=target_location,
+            reason=f"{slug!r} is absent; source engine must acquire it first",
+        )
+
+    if observed.state == "offline":
+        return PlanItem(
+            slug=slug,
+            observed=observed,
+            desired=desired,
+            classification="actionable",
+            action="place",
+            target_location=target_location,
+        )
+
+    # observed.state == "materialized"
+    if observed.location == target_location:
+        return PlanItem(
+            slug=slug,
+            observed=observed,
+            desired=desired,
+            classification="satisfied",
+            action="none",
+            target_location=target_location,
+        )
+
+    return PlanItem(
+        slug=slug,
+        observed=observed,
+        desired=desired,
+        classification="actionable",
+        action="relocate",
+        target_location=target_location,
+    )
+
+
 def _plan_absent(slug: str, observed: OnDiskRepo | None) -> PlanItem:
     if observed is None or observed.state == "offline":
         # Already not materialized.
@@ -216,6 +274,12 @@ def plan(
         observed = inventory.repos.get(slug)
         if isinstance(desired, LayoutTargetAbsent):
             items.append(_plan_absent(slug, observed))
+        elif isinstance(desired, LayoutTargetPresentAsIs):
+            items.append(
+                _plan_present_as_is(
+                    slug, observed, desired, workspace_root=workspace_root
+                )
+            )
         else:
             items.append(
                 _plan_present(slug, observed, desired, workspace_root=workspace_root)

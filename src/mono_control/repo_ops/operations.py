@@ -1,4 +1,11 @@
-"""The four shared verb implementations the CLI + aspects both build on."""
+"""The shared verb implementations the CLI + aspects both build on.
+
+``apply_target`` is the single layout-target orchestrator: scan, run the
+source engine, re-scan, run the layout engine, return both reports. Every
+mat / demat verb builds its own ``LayoutTarget`` and hands it here. ``init``
+and ``mark_aspect`` are the two verbs that *don't* fit that shape (one
+creates a repo def, one toggles a flag).
+"""
 
 from __future__ import annotations
 
@@ -8,11 +15,7 @@ from ..config import Repo, RepoStore, make_slug
 from ..engines import layout as layout_engine
 from ..engines import source as source_engine
 from ..host_platform import FsProfile
-from ..layout_target import (
-    LayoutTarget,
-    LayoutTargetAbsent,
-    LayoutTargetPresentBranchHead,
-)
+from ..layout_target import LayoutTarget
 from ..on_disk import scan
 
 
@@ -55,27 +58,25 @@ def init(
     return slug, report
 
 
-def materialize(
-    slug: str,
+def apply_target(
+    target: LayoutTarget,
     *,
-    location: str,
-    branch: str,
     repo_store: RepoStore,
     workspace_root: Path,
     offline_root: Path,
     profile: FsProfile,
 ) -> tuple[source_engine.SourceReport, layout_engine.LayoutReport]:
-    """Place ``slug`` at ``workspace_root/location`` (source-then-layout).
+    """Orchestrate source → layout against ``target``.
 
-    Re-scans between the engines so the layout step sees the post-acquisition
-    state. Returns both reports; the caller decides what to do on failure.
+    Scans the on-disk inventory, runs the source engine on the derived
+    source request, re-scans (so layout sees the post-acquisition state),
+    then runs the layout engine. Returns both reports so callers decide
+    what to do on failure.
+
+    Demat targets (only ``Absent`` slugs) work through this same function
+    because ``from_layout_target`` omits ``Absent`` slugs from the source
+    request — source engine is a no-op for them.
     """
-    target = LayoutTarget(
-        targets={
-            slug: LayoutTargetPresentBranchHead(branch=branch, location=location),
-        }
-    )
-
     inventory = scan(workspace_root, offline_root)
     source_report = source_engine.run(
         source_engine.from_layout_target(target),
@@ -93,23 +94,6 @@ def materialize(
         offline_root=offline_root,
     )
     return source_report, layout_report
-
-
-def dematerialize(
-    slug: str,
-    *,
-    workspace_root: Path,
-    offline_root: Path,
-) -> layout_engine.LayoutReport:
-    """Retire ``slug`` from its location back to offline (layout-only)."""
-    target = LayoutTarget(targets={slug: LayoutTargetAbsent()})
-    inventory = scan(workspace_root, offline_root)
-    return layout_engine.run(
-        target,
-        inventory=inventory,
-        workspace_root=workspace_root,
-        offline_root=offline_root,
-    )
 
 
 def mark_aspect(slug: str, aspect_name: str, *, repo_store: RepoStore) -> bool:

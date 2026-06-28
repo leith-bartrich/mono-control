@@ -4,6 +4,7 @@ from pydantic import ValidationError
 from mono_control.layout_target import (
     LayoutTarget,
     LayoutTargetAbsent,
+    LayoutTargetPresentAsIs,
     LayoutTargetPresentBranchHead,
     LayoutTargetPresentCommit,
 )
@@ -43,6 +44,17 @@ def test_absent_state():
     assert t.targets["gamma"].kind == "absent"
 
 
+def test_present_as_is_state():
+    t = LayoutTarget(
+        targets={
+            "delta": LayoutTargetPresentAsIs(location="apps/delta"),
+        }
+    )
+    state = t.targets["delta"]
+    assert state.kind == "present-as-is"
+    assert state.location == "apps/delta"
+
+
 def test_discriminator_round_trip_from_dict():
     t = LayoutTarget.model_validate(
         {
@@ -51,6 +63,7 @@ def test_discriminator_round_trip_from_dict():
                 "alpha": {"kind": "commit", "commit": "c" * 40, "location": "alpha"},
                 "beta": {"kind": "branch-head", "branch": "dev", "location": "beta"},
                 "gamma": {"kind": "absent"},
+                "delta": {"kind": "present-as-is", "location": "apps/delta"},
             },
         }
     )
@@ -58,6 +71,7 @@ def test_discriminator_round_trip_from_dict():
     assert isinstance(t.targets["alpha"], LayoutTargetPresentCommit)
     assert isinstance(t.targets["beta"], LayoutTargetPresentBranchHead)
     assert isinstance(t.targets["gamma"], LayoutTargetAbsent)
+    assert isinstance(t.targets["delta"], LayoutTargetPresentAsIs)
 
 
 def test_unknown_kind_rejected():

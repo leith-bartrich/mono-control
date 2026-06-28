@@ -11,6 +11,7 @@ from __future__ import annotations
 from ...base_models import StrictModel
 from ...layout_target import (
     LayoutTarget,
+    LayoutTargetPresentAsIs,
     LayoutTargetPresentBranchHead,
     LayoutTargetPresentCommit,
 )
@@ -33,6 +34,8 @@ def from_layout_target(target: LayoutTarget) -> SourceRequest:
     - ``commit`` desired state → the commit hash as a ref to verify (any fetch
       that brings the commit object in will satisfy it).
     - ``branch-head`` desired state → ``refs/heads/<branch>`` to verify.
+    - ``present-as-is`` desired state → empty ref set (acquire if absent;
+      no specific refs to verify since we're not checking anything out).
     - ``absent`` desired state → omitted (acquisition is additive).
     """
     refs_by_slug: dict[str, set[str]] = {}
@@ -41,5 +44,7 @@ def from_layout_target(target: LayoutTarget) -> SourceRequest:
             refs_by_slug[slug] = {desired.commit}
         elif isinstance(desired, LayoutTargetPresentBranchHead):
             refs_by_slug[slug] = {f"refs/heads/{desired.branch}"}
+        elif isinstance(desired, LayoutTargetPresentAsIs):
+            refs_by_slug[slug] = set()
         # absent → not acquired
     return SourceRequest(refs_by_slug=refs_by_slug)
