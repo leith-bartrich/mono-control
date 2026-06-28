@@ -23,15 +23,21 @@ A layout-target has two parts:
 - **A map of `slug → desired state`** — the member repos by immutable
   [slug](repo.md), each with a **discriminated desired state**. The `kind`
   discriminator (cf. [repo-set](repo-set.md)) leaves room for state types we don't
-  model yet. Initial kinds:
-  - **commit** — a precise commit;
-  - **branch-head** — the HEAD of a named branch (its latest, resolved at
-    execution) — the "latest, loose" day-to-day intent;
+  model yet. The kinds today:
+  - **commit** — present at a location, pinned to a precise commit;
+  - **branch-head** — present at a location, tracking the HEAD of a named branch
+    (its latest, resolved at execution) — the "latest, loose" day-to-day intent;
+  - **present-as-is** — present at a location, **no opinion on the current
+    ref**: the engine will place/move but never check out (placement-only — the
+    common manual-mat case);
   - **absent** — the repo should not be materialized.
 
-  Each *present* kind also names a desired **location** (a subdir under
-  `mono-repos`, defaultable by convention/aspect), so a layout-target expresses
-  desired **version and location**.
+  Each *present* kind names a desired **location** (a subdir under
+  `mono-repos`, defaultable by convention/aspect). Placement and ref intent
+  are *orthogonal* axes; `present-as-is` expresses one (placement),
+  `commit`/`branch-head` express both. The CLI's intent verbs
+  (`mat moveto` / `mat branchat` / `mat commit` / `mat layout-target`)
+  reflect this split.
 
 There is no separate "default branch" kind: "head of the default branch" is just a
 `branch-head` whose name the **command** fills in (reading the repo's

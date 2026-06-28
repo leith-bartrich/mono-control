@@ -54,7 +54,7 @@ Materialization is two engine steps, not a single clone: the
 init, stamped), then the [layout engine](../layout/README.md) **places** it at that
 subdir. (The [git layer](../git/README.md) provides the primitives.)
 
-## The manager (planned — the first real feature)
+## The manager
 
 Its code lives in `src/mono_control/aspects/product_cluster/` and it is invoked as
 `mproj control product-cluster <verb>` (per the
@@ -63,13 +63,21 @@ Its code lives in `src/mono_control/aspects/product_cluster/` and it is invoked 
 - **list-available** — the repos declaring the aspect, from config (no checkout).
 - **init / mark** — bring a new cluster into being (init via the source engine) or
   mark the aspect on an existing [repo def](../data/repo.md).
-- **mat** — get the cluster placed at `mono-repos/products/<name>`: the
-  [source engine](../source/README.md) acquires it into offline (if absent), then
-  the [layout engine](../layout/README.md) places it.
-- **demat** — retire the cluster (`products/<name>` → offline) via the layout
-  engine; non-destructive.
+- **mat** — a sub-group of intent verbs that drive the source +
+  [layout](../layout/README.md) engines:
+  - `mat moveto <name> [<subdir>]` — place at
+    `mono-repos/products/<subdir>` (defaults to the slugified repo name);
+    placement only, no ref change.
+  - `mat branchat <name> <branch>` — check out a branch's HEAD at the
+    cluster's current location.
+  - `mat commit <name> <sha>` — check out a specific commit (detached
+    HEAD) at the cluster's current location.
+  - `mat layout-target <name> --location L [--branch B | --commit C]` —
+    declarative one-liner combining placement and ref intent.
+- **demat** — retire the cluster (its `products/<subdir>` → offline) via the
+  layout engine; non-destructive.
 
-This is the first feature to drive the [source](../source/README.md) +
+This was the first feature to drive the [source](../source/README.md) +
 [layout](../layout/README.md) engines into a real, user-facing workflow.
 
 ## Observation (not yet a rule)

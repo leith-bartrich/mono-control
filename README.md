@@ -11,12 +11,17 @@ the repos it manages.
 ## What it does
 
 - Reads the workspace configuration from `mono-config`.
-- Knows which repos should exist in `mono-repos`, their remotes, and which
+- Knows which repos should exist on disk, their remotes, and which
   branches / tags / commits matter.
-- Clones repos into `mono-repos` if they aren't there yet.
-- Brings each repo to the right state — "latest on the default branch" for
-  day-to-day development, or specific commits/tags for a reproducible release.
-- Reports what's checked out, and whether anything is dirty or behind.
+- **Acquires** repos into a holding area (`mono-repos-offline/<slug>`) — the
+  *source engine* clones (or `git init`s a brand-new repo) and stamps each
+  checkout with the host's filesystem-capability profile and its identity slug.
+- **Arranges** them in the workspace (`mono-repos/...`) — the *layout engine*
+  places, relocates, retires, and checks out commits as a target says,
+  race-safely and per-repo independently.
+- Knows about *aspects* — extra roles a repo can carry (today:
+  `product-cluster`); the per-aspect CLI groups (`mproj control
+  product-cluster <verb>`) plug onto the same engine machinery.
 
 ## What it does NOT do
 
@@ -50,9 +55,10 @@ The container is defined by Docker Compose and serves two modes from one image:
 Inside the container the managed directories always live at fixed paths:
 
 ```
-/workspaces/mono-control   this repo — the state manager (baked into the image)
-/workspaces/mono-config    the workspace manifest (which repos, which states)
-/workspaces/mono-repos     where managed project repos are cloned
+/workspaces/mono-control        this repo — the state manager (baked into the image)
+/workspaces/mono-config          the workspace manifest (which repos, which states)
+/workspaces/mono-repos           where managed project repos are *placed* (materialized)
+/workspaces/mono-repos-offline   holding area for acquired-but-not-placed checkouts
 ```
 
 The shim lives on the host and is deliberately minimal (standard library only,
@@ -130,4 +136,30 @@ it uses Docker Compose against that live source (dev mode); if not, it runs the
 `mono-control:latest` image (artifact mode). Distribution of a prebuilt image via
 ghcr.io is planned; until then, build it locally with `mproj build-control`.
 
-> Placeholder — skeleton structure, to be built out.
+## Commands at a glance
+
+Everything below is invoked through the shim as `mproj control -- <args>` (the
+`--` keeps the shim from interpreting flags that belong to mono-control). A few
+representative verbs:
+
+```
+repo add <name> [--slug X]               # author a repo def (slug auto-derived)
+repo list                                # show repo defs
+repo show <name-or-slug>                 # one repo in detail
+
+repo init <name>                         # def + brand-new offline checkout
+repo mat moveto <name-or-slug> <subdir>  # place at mono-repos/<subdir>
+repo mat branchat <name-or-slug> <br>    # check out a branch at current location
+repo mat commit <name-or-slug> <sha>     # check out a commit (detached)
+repo demat <name-or-slug>                # retire to offline
+
+product-cluster list-available           # repos declaring the aspect
+product-cluster init <name>              # new product-cluster repo
+product-cluster mat moveto <name-or-slug>  [<subdir>]   # default: products/<derived>
+```
+
+Run `mproj control -- --help` for the live tree.
+
+## License
+
+[MIT](LICENSE).

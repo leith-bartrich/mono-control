@@ -46,15 +46,18 @@ If that commit isn't local, the repo is *blocked*: acquisition must run first.
 
 **One materialization per repo** — a repo is checked out in at most one location, so
 the workspace is a single coherent layout. From the observed state the engine
-derives, per repo:
+derives, per repo. The "+ checkout" steps below apply only when the desired
+state carries a ref intent (`commit` / `branch-head`); for `present-as-is`
+the move happens without any checkout — placement is preserved-as-is:
 
 | Observed | Request | Action |
 |---|---|---|
-| offline | present | **place** (move offline → location) + checkout the resolved commit |
-| at the target location | present | **checkout** to the resolved commit |
-| at a *different* location | present (`pre_clear` false) | **relocate** (move location → location) + checkout |
+| offline | present (any kind) | **place** (move offline → location) + checkout the resolved commit (if any) |
+| at the target location | present (with ref intent) | **checkout** to the resolved commit |
+| at the target location | `present-as-is` | **satisfied** (no-op) |
+| at a *different* location | present (`pre_clear` false) | **relocate** (move location → location) + checkout (if any) |
 | materialized | `absent`, or a `pre_clear` extra | **retire** (move location → offline) |
-| absent | present | *blocked* — not local; the [source engine](../source/README.md) must acquire it first |
+| absent | present (any kind) | *blocked* — not local; the [source engine](../source/README.md) must acquire it first |
 
 A shared repo therefore **moves** rather than duplicating: if two product clusters
 both want repo X, the second relocates it — you switch layouts, never hold two at
