@@ -17,7 +17,7 @@ is **where each lives**.
   default, but a repo carrying an
   [aspect](../repo-aspects/README.md) is read and written as structured data, so
   some abstractions live **inside** such a repo (not in a separate source). The
-  first aspect — the [product cluster](../repo-aspects/product-cluster.md) — holds
+  first aspect — the [product cluster](../repo-aspects/product-cluster/README.md) — holds
   [snapshot](snapshot.md)s (captured state) and authored named sets / artifact
   configurations (the persisted form of a [repo-set](repo-set.md)).
 - **Memory — constructed, never stored.** Some abstractions are built on the fly:

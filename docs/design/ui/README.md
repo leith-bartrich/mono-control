@@ -64,5 +64,5 @@ its repo (`mono-control-shim/docs/design/command-conventions.md`).
 - `mono-control repl` runs multiple commands in one container session; its norms
   (history, completion, prompt) are still emerging.
 - As richer aspects land (e.g. the
-  [product-cluster](../layers/repo-aspects/product-cluster.md) manager), these
+  [product-cluster](../layers/repo-aspects/product-cluster/README.md) manager), these
   conventions should be extended here rather than reinvented per feature.

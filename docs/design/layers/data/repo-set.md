@@ -14,7 +14,7 @@ in-memory **`members()` interface** (`RepoSetLike`). It comes into existence by
 
 - a **[snapshot](snapshot.md)** — its `{slug → …}` is a repo set's membership;
 - a **product** — the authored, named set housed *inside* a
-  [product cluster](../repo-aspects/product-cluster.md), with build/artifact
+  [product cluster](../repo-aspects/product-cluster/README.md), with build/artifact
   meaning attached (the persisted form of "a named subset of repos that matter").
 
 So the authored form lives in a product-cluster repo (under that aspect's schema —

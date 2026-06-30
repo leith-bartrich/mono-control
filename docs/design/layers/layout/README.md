@@ -124,4 +124,4 @@ stays legible.
 - **Default-branch resolution** — which of main/master/dev is "default" is the
   repo's [branch convention](../data/repo.md), still TBD.
 - **Capture** may be always-on or opt-in, and *where* a captured snapshot lands
-  (e.g. inside a [product cluster](../repo-aspects/product-cluster.md)) is open.
+  (e.g. inside a [product cluster](../repo-aspects/product-cluster/README.md)) is open.

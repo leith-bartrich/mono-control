@@ -70,7 +70,7 @@ one of:
   (its `{slug → (commit, location)}` becomes precise desired state);
 - a **development intent** — "work on repo set X at latest" — for example a named
   *artifact configuration* inside a
-  [product cluster](../repo-aspects/product-cluster.md);
+  [product cluster](../repo-aspects/product-cluster/README.md);
 - or **ad-hoc** — a CLI verb constructing a one-off target (e.g. materialize or
   dematerialize a repo).
 

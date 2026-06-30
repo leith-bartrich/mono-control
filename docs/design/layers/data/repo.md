@@ -48,7 +48,7 @@ holds the maps.
 
 A definition may declare one or more [aspects](../repo-aspects/README.md) — extra
 roles a repo carries, such as being a
-[product cluster](../repo-aspects/product-cluster.md). The *declaration* lives here
+[product cluster](../repo-aspects/product-cluster/README.md). The *declaration* lives here
 in config, so an aspect is discoverable without checking the repo out; the aspect's
 *detailed* data lives inside the [on-disk repo](on-disk-repo.md). Aspects
 **compose** — a repo may carry several.

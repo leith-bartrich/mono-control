@@ -7,7 +7,7 @@ several — so an aspect is a *trait*, not an exclusive `kind`.
 Most managed repos are opaque: mono-control only *versions* them and never looks
 inside. An aspect is a declared, **understood** role that lets mono-control do
 more with a repo — read structured data from it, materialize it specially, and so
-on. The first aspect is the [product cluster](product-cluster.md).
+on. The first aspect is the [product cluster](product-cluster/README.md).
 
 ## The contract: declared in config, detailed in the repo
 
@@ -48,7 +48,7 @@ guarantees a repo lives exactly there — so it stays informal and may vary. The
 acquires the repo into offline (clone/init, stamped), then the
 [layout engine](../layout/README.md) places it — over the [git layer](../git/README.md)'s
 primitives; only the *policy* of where (and any aspect-specific setup) is the
-aspect's. (The first: a [product cluster](product-cluster.md) materializes by default
+aspect's. (The first: a [product cluster](product-cluster/README.md) materializes by default
 under `mono-repos/products/`.)
 
 ## Reference: subdir as a friendly alias
@@ -91,4 +91,4 @@ the top-level `cli/`.
 ## Document map
 - This file — the aspect contract (declaration vs. detail, discovery,
   per-aspect materialization, code/CLI layout).
-- [product-cluster.md](product-cluster.md) — the first aspect.
+- [product-cluster/](product-cluster/README.md) — the first aspect.

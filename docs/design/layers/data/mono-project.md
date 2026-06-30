@@ -16,7 +16,7 @@ It has two parts, with two different natures:
   at what commit changes over time, brought into line by the
   [layout engine](../layout/README.md). A repo may also carry
   [aspects](../repo-aspects/README.md) — extra roles such as being a
-  [product cluster](../repo-aspects/product-cluster.md) — that mono-control
+  [product cluster](../repo-aspects/product-cluster/README.md) — that mono-control
   understands beyond treating the repo as opaque.
 
 So config is the steady, growing statement of *what exists*, and the materialized

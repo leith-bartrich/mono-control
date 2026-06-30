@@ -37,7 +37,7 @@ tree is **dirty**. The layout engine reads these to diff against a
 By default mono-control **never reads an on-disk repo's contents** — it manages
 *which revision is present*, not what's inside (the opacity boundary). The
 exception is an [aspect](../repo-aspects/README.md) repo, such as a
-[product cluster](../repo-aspects/product-cluster.md): there mono-control *does*
+[product cluster](../repo-aspects/product-cluster/README.md): there mono-control *does*
 read structured data from the checkout (artifact configurations, snapshots). So
 opacity is the rule; aspect repos are the deliberate, declared exception — and the
 reason the on-disk repo is a first-class data-layer concept, not just a side effect.

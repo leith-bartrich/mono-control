@@ -115,7 +115,7 @@ holds** are:
 - [repo.md](repo.md) — an individual managed repository definition.
 
 Other data-layer abstractions are **not** in this config source — they live in
-product-cluster repos (via an [aspect](../repo-aspects/product-cluster.md)) or in
+product-cluster repos (via an [aspect](../repo-aspects/product-cluster/README.md)) or in
 memory. The [data layer README](README.md) is the full where-each-lives index,
 covering also [repo-set](repo-set.md), [layout-target](layout-target.md), and
 [snapshot](snapshot.md).

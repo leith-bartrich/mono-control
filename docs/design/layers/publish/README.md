@@ -17,7 +17,7 @@ their own; publishing is always something a user or automation asks for on purpo
 The clearest candidate is publishing mono-control's **own data-repo state** — for
 example, committing and pushing the [snapshots](../data/snapshot.md) and artifact
 records that mono-control writes into a
-[product cluster](../repo-aspects/product-cluster.md) back to that cluster's remote.
+[product cluster](../repo-aspects/product-cluster/README.md) back to that cluster's remote.
 That is publishing *mono-control's data*, which is distinct from pushing a
 developer's source work in an opaque managed repo — that remains a **developer / CI**
 concern and is **out of scope**.
