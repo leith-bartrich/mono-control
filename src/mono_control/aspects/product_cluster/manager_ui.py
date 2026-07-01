@@ -28,6 +28,7 @@ _MARK = "[mark existing repo]"
 _CLEAR = "[clear workspace]"
 _QUIT = "[quit]"
 _BACK = "[back]"
+_CONFORM = "conform ▸"
 
 
 def _confirm_dirty(dirty: list[str]) -> bool:
@@ -117,22 +118,20 @@ def _manage_one(store: RepoStore, repo) -> None:
         state = observed.state if observed is not None else "absent"
         console.print(f"[bold]{repo.slug}[/bold] — {repo.name}  ({state})")
         action = questionary.select(
-            "Action", choices=["relayout", "place", "swap to", "demat", "layout", _BACK]
+            "Action", choices=[_CONFORM, "place", "edit layout", "demat", _BACK]
         ).ask()
         if action in (None, _BACK):
             return
-        if action == "relayout":
-            actions.relayout(repo, store=store, console=console, on_dirty=_confirm_dirty)
+        if action == _CONFORM:
+            _conform_menu(store, repo)
         elif action == "place":
             subdir = (
                 questionary.text("subdir under products/ (blank = default):").ask() or ""
             ).strip() or None
             actions.place(repo, subdir, store=store, console=console)
-        elif action == "swap to":
-            actions.swap(repo, store=store, console=console, on_dirty=_confirm_dirty)
         elif action == "demat":
             actions.demat(repo, store=store, console=console, on_dirty=_confirm_dirty)
-        elif action == "layout":
+        elif action == "edit layout":
             try:
                 checkout = resolve_cluster_checkout(
                     repo.slug,
@@ -143,3 +142,18 @@ def _manage_one(store: RepoStore, repo) -> None:
                 console.print(f"[red]error:[/red] {e}")
                 continue
             manage_layout(ClusterLayoutStore(checkout), store, repo.slug)
+
+
+def _conform_menu(store: RepoStore, repo) -> None:
+    """Workspace-conform actions for this cluster, grouped under their own menu
+    (so they don't sit flat beside mat/layout actions — and `relayout` isn't
+    confusingly adjacent to `edit layout`)."""
+    action = questionary.select(
+        "Conform the workspace to", choices=["relayout", "swap to", _BACK]
+    ).ask()
+    if action in (None, _BACK):
+        return
+    if action == "relayout":
+        actions.relayout(repo, store=store, console=console, on_dirty=_confirm_dirty)
+    elif action == "swap to":
+        actions.swap(repo, store=store, console=console, on_dirty=_confirm_dirty)
