@@ -30,3 +30,46 @@ def test_relative_config_dir_rejected():
     result = runner.invoke(app, ["--config-dir", "relative/cfg", "status"])
     assert result.exit_code != 0
     assert "absolute" in result.output.lower()
+
+
+def test_version_command():
+    result = runner.invoke(app, ["version"])
+    assert result.exit_code == 0
+    assert "mono-control" in result.output
+
+
+def test_help_command_top_level():
+    result = runner.invoke(app, ["help"])
+    assert result.exit_code == 0
+    assert "Usage" in result.output
+
+
+def test_help_command_for_subcommand():
+    result = runner.invoke(app, ["help", "repo"])
+    assert result.exit_code == 0
+    assert "repo" in result.output.lower()
+
+
+def test_help_command_unknown():
+    result = runner.invoke(app, ["help", "nope"])
+    assert result.exit_code != 0
+    assert "unknown command" in result.output
+
+
+def test_completion_descends_into_subcommands():
+    import typer
+
+    from mono_control.cli.app import _completion_candidates
+
+    group = typer.main.get_command(app)
+    # top-level prefix
+    assert "product-cluster" in _completion_candidates(group, "prod", [])
+    # descend into a sub-group's subcommands
+    subs = set(_completion_candidates(group, "product-cluster ", []))
+    assert {"conform", "layout", "mat", "manage"} <= subs
+    # nested one level further
+    conf = set(_completion_candidates(group, "product-cluster conform ", []))
+    assert {"relayout", "clear", "swap"} <= conf
+    # extra (REPL exit) words only offered at the root
+    assert "quit" in _completion_candidates(group, "", ["quit"])
+    assert "quit" not in _completion_candidates(group, "product-cluster ", ["quit"])
