@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -139,6 +140,77 @@ def test_mat_moveto_then_demat_round_trip(workspace, tmp_path):
     assert demat_result.exit_code == 0, demat_result.output
     assert not placed.exists()
     assert (offline_root / "cluster1" / ".git").is_dir()
+
+
+def _materialize(config_dir: Path, tmp_path: Path, *, slug: str, name: str) -> None:
+    origin = tmp_path / f"origin-{slug}"
+    _origin(origin, branch="main")
+    store = RepoStore.from_config_dir(config_dir)
+    store.create(
+        Repo(
+            version=1,
+            slug=slug,
+            name=name,
+            sources={"origin": str(origin)},
+            aspects={"product-cluster"},
+        )
+    )
+    assert _invoke(["mat", "moveto", slug], config_dir=config_dir).exit_code == 0
+
+
+def test_current_defaults_to_name(workspace, tmp_path):
+    config_dir, _, _ = workspace
+    _materialize(config_dir, tmp_path, slug="cluster1", name="Cluster One")
+
+    result = _invoke(["current"], config_dir=config_dir)
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == "Cluster One"
+
+
+def test_current_slug_and_json(workspace, tmp_path):
+    config_dir, _, _ = workspace
+    _materialize(config_dir, tmp_path, slug="cluster1", name="Cluster One")
+
+    slug_result = _invoke(["current", "--slug"], config_dir=config_dir)
+    assert slug_result.exit_code == 0, slug_result.output
+    assert slug_result.output.strip() == "cluster1"
+
+    json_result = _invoke(["current", "--json"], config_dir=config_dir)
+    assert json_result.exit_code == 0, json_result.output
+    payload = json.loads(json_result.output)
+    assert payload["slug"] == "cluster1"
+    assert payload["name"] == "Cluster One"
+    # default_subdir derives from slugify(name): "Cluster One" → "cluster-one".
+    assert payload["location"] == "products/cluster-one"
+
+
+def test_current_rejects_conflicting_forms(workspace, tmp_path):
+    config_dir, _, _ = workspace
+    _materialize(config_dir, tmp_path, slug="cluster1", name="Cluster One")
+
+    result = _invoke(["current", "--name", "--slug"], config_dir=config_dir)
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output
+
+
+def test_current_errors_when_none_materialized(workspace):
+    config_dir, _, _ = workspace
+    store = RepoStore.from_config_dir(config_dir)
+    store.create(Repo(version=1, slug="idle", name="Idle", aspects={"product-cluster"}))
+
+    result = _invoke(["current"], config_dir=config_dir)
+    assert result.exit_code != 0
+    assert "no materialized product-cluster" in result.output
+
+
+def test_current_errors_when_many_materialized(workspace, tmp_path):
+    config_dir, _, _ = workspace
+    _materialize(config_dir, tmp_path, slug="cluster1", name="Cluster One")
+    _materialize(config_dir, tmp_path, slug="cluster2", name="Cluster Two")
+
+    result = _invoke(["current"], config_dir=config_dir)
+    assert result.exit_code != 0
+    assert "multiple materialized product-clusters" in result.output
 
 
 def test_demat_blocks_dirty_cluster(workspace, tmp_path):
