@@ -94,6 +94,24 @@ def test_init_absent_without_source(tmp_path):
     assert GitRepo(offline / "fresh").slug() == "fresh"
 
 
+def test_init_absent_honors_initial_branch(tmp_path):
+    store = _store_with(tmp_path, Repo(version=1, slug="fresh", name="Fresh"))
+    offline = tmp_path / "offline"
+
+    report = run(
+        SourceRequest(refs_by_slug={"fresh": set()}, initial_branch="develop"),
+        repo_store=store,
+        inventory=OnDiskInventory(),
+        offline_root=offline,
+        profile=PROFILE,
+    )
+
+    assert report.ok
+    assert report.outcomes[0].status == "initialized"
+    head = run_git(["symbolic-ref", "HEAD"], cwd=offline / "fresh").strip()
+    assert head == "refs/heads/develop"
+
+
 def test_source_missing_when_refs_requested(tmp_path):
     store = _store_with(tmp_path, Repo(version=1, slug="nope", name="Nope"))
     offline = tmp_path / "offline"

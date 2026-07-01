@@ -56,6 +56,7 @@ def _process_slug(
     inventory: OnDiskInventory,
     offline_root: Path,
     profile: FsProfile,
+    initial_branch: str | None = None,
 ) -> SourceOutcome:
     try:
         definition = repo_store.load(slug)
@@ -83,7 +84,12 @@ def _process_slug(
                     unresolved_refs=set(requested_refs),
                 )
             try:
-                init(offline_root / slug, profile=profile, slug=slug)
+                init(
+                    offline_root / slug,
+                    profile=profile,
+                    slug=slug,
+                    initial_branch=initial_branch,
+                )
             except GitError as e:
                 return SourceOutcome(
                     slug=slug,
@@ -191,6 +197,7 @@ def run(
             inventory=inventory,
             offline_root=offline_root,
             profile=profile,
+            initial_branch=request.initial_branch,
         )
         for slug, refs in request.refs_by_slug.items()
     ]

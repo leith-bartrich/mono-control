@@ -127,13 +127,21 @@ def clone(
     return repo
 
 
-def init(path: Path | str, *, profile: FsProfile, slug: str) -> GitRepo:
+def init(
+    path: Path | str, *, profile: FsProfile, slug: str, initial_branch: str | None = None
+) -> GitRepo:
     """Initialize a new empty repo at ``path`` and stamp ``profile`` + ``slug``.
 
-    No checkout exists yet, so the returned repo's ``current_commit()`` is ``None``.
+    ``initial_branch`` names the (unborn) HEAD branch via ``git init
+    --initial-branch``; when omitted, git uses its configured default. No checkout
+    exists yet, so the returned repo's ``current_commit()`` is ``None``.
     """
     path = Path(path)
-    run_git(["init", str(path)])
+    args = ["init"]
+    if initial_branch is not None:
+        args += ["--initial-branch", initial_branch]
+    args.append(str(path))
+    run_git(args)
     repo = GitRepo(path)
     repo._apply_profile(profile)
     repo._apply_slug(slug)
@@ -154,3 +162,20 @@ def ls_remote(url: str | Path, ref: str) -> str | None:
     first_line = out.splitlines()[0]
     sha, _, _ = first_line.partition("\t")
     return sha or None
+
+
+def remote_default_branch(url: str | Path) -> str | None:
+    """Read the remote's default branch (its symbolic HEAD), or ``None``.
+
+    Runs ``git ls-remote --symref <url> HEAD`` and returns the branch HEAD points
+    at (e.g. ``main``). Network/transport failures bubble up as ``GitCommandError``;
+    ``None`` means the remote reported no ``refs/heads/*`` symref for HEAD.
+    """
+    out = run_git(["ls-remote", "--symref", str(url), "HEAD"])
+    for line in out.splitlines():
+        # e.g. "ref: refs/heads/main\tHEAD"
+        if line.startswith("ref:"):
+            target = line[len("ref:") :].strip().split()[0]
+            if target.startswith("refs/heads/"):
+                return target[len("refs/heads/") :]
+    return None

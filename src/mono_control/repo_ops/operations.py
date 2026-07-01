@@ -26,6 +26,8 @@ def init(
     *,
     slug: str | None = None,
     aspects: set[str] | None = None,
+    branches: dict[str, str] | None = None,
+    initial_branch: str | None = None,
     repo_store: RepoStore,
     workspace_root: Path,
     offline_root: Path,
@@ -35,10 +37,12 @@ def init(
 
     ``name`` is the primary user-facing handle; the slug is derived
     mechanically via :func:`make_slug` unless ``slug`` is supplied (the
-    power-user escape hatch). Returns ``(slug, source_report)`` so callers can
-    surface the resolved slug. Raises ``ConfigConflictError`` if an explicit
-    ``slug`` is already taken, or ``RuntimeError`` if the derived slug
-    couldn't be made unique within the retry cap (astronomically unlikely).
+    power-user escape hatch). ``branches`` seeds the def's named-branch map (e.g.
+    ``{"dev": "main"}``), and ``initial_branch`` names the branch the new repo is
+    ``git init``-ed on. Returns ``(slug, source_report)`` so callers can surface
+    the resolved slug. Raises ``ConfigConflictError`` if an explicit ``slug`` is
+    already taken, or ``RuntimeError`` if the derived slug couldn't be made unique
+    within the retry cap (astronomically unlikely).
     """
     if slug is None:
         slug = make_slug(name, exists=repo_store.exists)
@@ -47,11 +51,14 @@ def init(
         slug=slug,
         name=name,
         aspects=aspects or set(),
+        branches=branches or {},
     )
     repo_store.create(repo)  # raises ConfigConflictError on duplicate
     inventory = scan(workspace_root, offline_root)
     report = source_engine.run(
-        source_engine.SourceRequest(refs_by_slug={slug: set()}),
+        source_engine.SourceRequest(
+            refs_by_slug={slug: set()}, initial_branch=initial_branch
+        ),
         repo_store=repo_store,
         inventory=inventory,
         offline_root=offline_root,
