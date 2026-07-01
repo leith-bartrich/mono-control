@@ -104,6 +104,46 @@ def list_available(ctx: typer.Context) -> None:
     console.print(table)
 
 
+@app.command("current")
+def current(
+    ctx: typer.Context,
+    as_name: bool = typer.Option(False, "--name", help="Print the name (default)."),
+    as_slug: bool = typer.Option(False, "--slug", help="Print the slug."),
+    as_json: bool = typer.Option(
+        False, "--json", help="Print slug, name, and location as JSON."
+    ),
+) -> None:
+    """Print the currently materialized product-cluster (the sole one placed).
+
+    Resolves the same way ``conform`` / ``layout`` do when no cluster is named —
+    the single materialized cluster — so it can't drift from what those verbs act
+    on. With no flag it prints the name; ``--slug`` / ``--json`` select other forms
+    (mutually exclusive). Exits non-zero when zero or more than one is materialized.
+    """
+    chosen = [
+        form
+        for form, on in (("name", as_name), ("slug", as_slug), ("json", as_json))
+        if on
+    ]
+    if len(chosen) > 1:
+        raise _fail("--name / --slug / --json are mutually exclusive")
+    form = chosen[0] if chosen else "name"
+
+    repo = _resolve_cluster(ctx, None)
+    if form == "slug":
+        console.print(repo.slug, markup=False, highlight=False)
+    elif form == "json":
+        console.print_json(
+            data={
+                "slug": repo.slug,
+                "name": repo.name,
+                "location": _observed_materialized_location(repo),
+            }
+        )
+    else:
+        console.print(repo.name, markup=False, highlight=False)
+
+
 @app.command("mark")
 def mark(
     ctx: typer.Context,
