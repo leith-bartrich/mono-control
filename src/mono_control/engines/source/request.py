@@ -23,9 +23,14 @@ class SourceRequest(StrictModel):
     An empty set means "just ensure availability" (clone if absent; no specific
     refs to verify). A non-empty set means each ref must resolve locally
     (``git rev-parse``) after fetch.
+
+    ``initial_branch`` names the branch a brand-new repo is ``git init``-ed on
+    (only used when a slug is absent *and* declares no source); otherwise git's
+    default applies.
     """
 
     refs_by_slug: dict[str, set[str]] = {}
+    initial_branch: str | None = None
 
 
 def from_layout_target(target: LayoutTarget) -> SourceRequest:

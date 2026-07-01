@@ -62,6 +62,20 @@ def test_repo_init_creates_offline_repo(workspace):
     assert GitRepo(offline_root / "plain").slug() == "plain"
 
 
+def test_repo_init_initial_branch_sets_dev_and_inits_on_it(workspace):
+    config_dir, _, offline_root = workspace
+    result = _run(
+        config_dir, "repo", "init", "Dev Repo", "--slug", "dev-repo",
+        "--initial-branch", "develop",
+    )
+    assert result.exit_code == 0, result.output
+
+    repo = RepoStore.from_config_dir(config_dir).load("dev-repo")
+    assert repo.branches == {"dev": "develop"}
+    head = run_git(["symbolic-ref", "HEAD"], cwd=offline_root / "dev-repo").strip()
+    assert head == "refs/heads/develop"
+
+
 def test_repo_init_derives_slug_from_name(workspace):
     config_dir, _, offline_root = workspace
     result = _run(config_dir, "repo", "init", "My Plain Repo")

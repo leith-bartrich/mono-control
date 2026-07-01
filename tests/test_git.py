@@ -9,6 +9,7 @@ from mono_control.git import (
     clone,
     init,
     ls_remote,
+    remote_default_branch,
 )
 from mono_control.git.runner import run_git
 from mono_control.host_platform import FsProfile
@@ -56,6 +57,29 @@ def test_clone_checks_out_and_stamps(tmp_path):
     assert repo.config_get("core.symlinks") == "false"
     assert repo.config_get("core.ignorecase") == "true"
     assert repo.slug() == "demo"
+
+
+def test_init_with_initial_branch(tmp_path):
+    init(tmp_path / "fresh", profile=LINUXISH, slug="fresh", initial_branch="trunk")
+    assert GitRepo(tmp_path / "fresh").slug() == "fresh"
+    head = run_git(["symbolic-ref", "HEAD"], cwd=tmp_path / "fresh").strip()
+    assert head == "refs/heads/trunk"
+
+
+def test_remote_default_branch_reads_symbolic_head(tmp_path):
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    run_git(["init", "--initial-branch", "trunk", str(origin)])
+    (origin / "README.md").write_text("hi\n")
+    run_git(["add", "."], cwd=origin)
+    run_git(["commit", "-m", "initial"], cwd=origin)
+
+    assert remote_default_branch(origin) == "trunk"
+
+
+def test_remote_default_branch_bad_url_raises():
+    with pytest.raises(GitCommandError):
+        remote_default_branch("/no/such/repo/here")
 
 
 def test_init_is_empty_and_stamps(tmp_path):

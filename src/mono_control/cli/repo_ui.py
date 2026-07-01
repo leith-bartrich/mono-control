@@ -8,7 +8,10 @@ the unit tests exercise.
 import questionary
 from rich.console import Console
 
+from mono_control import paths, repo_ops
 from mono_control.config import ConfigError, Repo, RepoStore, make_slug
+from mono_control.git import GitError, remote_default_branch
+from mono_control.host_platform import profile as host_profile
 
 console = Console()
 
@@ -31,18 +34,96 @@ def manage(store: RepoStore) -> None:
 
 
 def _add(store: RepoStore) -> None:
+    """Guided repo creation — walks the user into canonical source/branch values.
+
+    Two paths: a **new** repo (init it on a chosen dev branch) or an **existing**
+    one (ours=`origin` / someone-else's=`upstream` + optional `fork-ours`, with the
+    remote's default branch probed and offered for `dev`). Still permissive — the
+    prompts only *suggest* the governed names.
+    """
     name = (questionary.text("name:").ask() or "").strip()
     if not name:
         return
     slug_override = (
         questionary.text("slug (blank = auto-derive from name):").ask() or ""
     ).strip()
+    kind = questionary.select(
+        "Is this a new repo, or does it already exist?", choices=["new", "existing"]
+    ).ask()
+    if kind is None:
+        return
     try:
         slug = slug_override if slug_override else make_slug(name, exists=store.exists)
-        store.create(Repo(version=1, slug=slug, name=name))
-        console.print(f"[green]created[/green] {slug}")
+        if kind == "new":
+            _add_new(store, name, slug)
+        else:
+            _add_existing(store, name, slug)
     except (ConfigError, ValueError, RuntimeError) as e:
         console.print(f"[red]error:[/red] {e}")
+
+
+def _add_new(store: RepoStore, name: str, slug: str) -> None:
+    dev = (questionary.text("dev branch name:", default="main").ask() or "").strip()
+    if not dev:
+        return
+    resolved_slug, report = repo_ops.init(
+        name,
+        slug=slug,
+        branches={"dev": dev},
+        initial_branch=dev,
+        repo_store=store,
+        workspace_root=paths.REPOS_DIR,
+        offline_root=paths.OFFLINE_DIR,
+        profile=host_profile(),
+    )
+    console.print(f"[green]created[/green] {resolved_slug} (dev = {dev})")
+    repo_ops.render_outcomes(f"init {resolved_slug}", report.outcomes, console=console)
+
+
+def _add_existing(store: RepoStore, name: str, slug: str) -> None:
+    choice = questionary.select(
+        "Is this ours, or based on someone else's?",
+        choices=["ours", "someone else's (upstream)"],
+    ).ask()
+    if choice is None:
+        return
+    sources: dict[str, str] = {}
+    if choice == "ours":
+        url = (questionary.text("origin URL:").ask() or "").strip()
+        if not url:
+            return
+        sources["origin"] = url
+    else:
+        url = (questionary.text("upstream URL:").ask() or "").strip()
+        if not url:
+            return
+        sources["upstream"] = url
+        if questionary.confirm("Do you maintain your own fork?", default=False).ask():
+            fork_url = (questionary.text("fork (ours) URL:").ask() or "").strip()
+            if fork_url:
+                sources["fork-ours"] = fork_url
+
+    dev = _prompt_dev_from_remote(url)
+    branches = {"dev": dev} if dev else {}
+    store.create(Repo(version=1, slug=slug, name=name, sources=sources, branches=branches))
+    console.print(f"[green]created[/green] {slug}")
+
+
+def _prompt_dev_from_remote(url: str) -> str | None:
+    """Probe the remote's default branch and offer it for `dev`; else ask (blank skips)."""
+    try:
+        default = remote_default_branch(url)
+    except GitError:
+        console.print("[yellow](couldn't read the remote; specify the dev branch)[/yellow]")
+        default = None
+    if default and questionary.confirm(
+        f"The remote's default branch is {default!r} — use it as `dev`?", default=True
+    ).ask():
+        return default
+    return (
+        questionary.text("dev branch name (blank to skip):", default=default or "").ask()
+        or ""
+    ).strip() or None
 
 
 def _manage_one(store: RepoStore, slug: str) -> None:

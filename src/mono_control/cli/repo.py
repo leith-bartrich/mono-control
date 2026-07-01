@@ -325,6 +325,11 @@ def init_cmd(
         "--slug",
         help="Slug override (default: derived as `slugify(name)-<4 hex>`).",
     ),
+    initial_branch: str = typer.Option(
+        None,
+        "--initial-branch",
+        help="Branch to init the new repo on (also recorded as its `dev` branch).",
+    ),
 ) -> None:
     """Create a brand-new repo def + ``git init`` it into offline."""
     store = _store(ctx)
@@ -332,6 +337,8 @@ def init_cmd(
         resolved_slug, report = repo_ops.init(
             name,
             slug=slug,
+            branches={"dev": initial_branch} if initial_branch else None,
+            initial_branch=initial_branch,
             repo_store=store,
             workspace_root=paths.REPOS_DIR,
             offline_root=paths.OFFLINE_DIR,
