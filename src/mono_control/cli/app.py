@@ -100,26 +100,92 @@ def validate(ctx: typer.Context) -> None:
     console.print(f"[green]ok:[/green] config is valid ({len(slugs)} repo(s))")
 
 
+@app.command("version")
+def version_cmd() -> None:
+    """Show the mono-control version (a command form of ``--version``)."""
+    console.print(f"mono-control {version('mono-control')}")
+
+
+@app.command("help")
+def help_cmd(
+    ctx: typer.Context,
+    command: str = typer.Argument(
+        None, help="Command to show help for (default: the whole CLI)."
+    ),
+) -> None:
+    """Show help — for the whole CLI, or for a specific command.
+
+    A friendlier alias for ``--help``, especially in the REPL where a bare
+    ``help`` reads better than a ``--help`` flag.
+    """
+    group: click.Group = ctx.parent.command if ctx.parent else ctx.command
+    parent_ctx = ctx.parent or ctx
+    if command is None:
+        typer.echo(group.get_help(parent_ctx))
+        return
+    sub = group.get_command(parent_ctx, command)
+    if sub is None:
+        console.print(f"[red]error:[/red] unknown command: {command!r}")
+        raise typer.Exit(code=1)
+    with click.Context(sub, info_name=command, parent=parent_ctx) as sub_ctx:
+        typer.echo(sub.get_help(sub_ctx))
+
+
 _REPL_EXIT = {":exit", ":quit", "exit", "quit"}
+
+
+def _completion_candidates(group: click.Group, text: str, extra: list[str]) -> list[str]:
+    """Names completing the last token of ``text`` against the command tree.
+
+    Walks the already-typed tokens into sub-groups and returns the current
+    node's subcommands (plus ``extra`` at the root) that match the trailing
+    prefix. UI-agnostic (no prompt_toolkit) so it is unit-testable.
+    """
+    tokens = text.split()
+    completing_new = not text or text[-1].isspace()
+    consumed = tokens if completing_new else tokens[:-1]
+    prefix = "" if completing_new else tokens[-1]
+
+    # Duck-type the group interface: a command *group* exposes get_command /
+    # list_commands, a leaf command does not. (Don't isinstance-check click.Group —
+    # Typer's group class doesn't reliably satisfy it across click versions.)
+    node: object = group
+    for tok in consumed:
+        get_command = getattr(node, "get_command", None)
+        node = get_command(None, tok) if get_command else None
+        if node is None:
+            return []
+    list_commands = getattr(node, "list_commands", None)
+    options: list[str] = list(list_commands(None)) if list_commands else []
+    if node is group:
+        options.extend(extra)
+    return [n for n in sorted(set(options)) if n.startswith(prefix)]
 
 
 @app.command()
 def repl(ctx: typer.Context) -> None:
     """Start an interactive REPL over mono-control commands."""
     from prompt_toolkit import PromptSession
-    from prompt_toolkit.completion import WordCompleter
+    from prompt_toolkit.completion import Completer, Completion
     from prompt_toolkit.history import InMemoryHistory
 
     # The Typer app compiles to a Click group; dispatch each REPL line against it.
     group: click.Group = ctx.parent.command if ctx.parent else ctx.command
-    names = [n for n in group.commands if n != "repl"]
-    session = PromptSession(
-        history=InMemoryHistory(),
-        completer=WordCompleter(names + sorted(_REPL_EXIT), ignore_case=True),
-    )
+    exit_words = sorted(_REPL_EXIT)
+
+    class _TreeCompleter(Completer):
+        """Complete against the command tree, descending into sub-groups."""
+
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor
+            prefix = "" if (not text or text[-1].isspace()) else text.split()[-1]
+            for name in _completion_candidates(group, text, exit_words):
+                yield Completion(name, start_position=-len(prefix))
+
+    session = PromptSession(history=InMemoryHistory(), completer=_TreeCompleter())
 
     console.print(
-        "mono-control REPL — run a command, [bold]--help[/bold], or [bold]:exit[/bold]."
+        "mono-control REPL — run a command, [bold]help[/bold], or [bold]:exit[/bold]."
     )
     while True:
         try:
