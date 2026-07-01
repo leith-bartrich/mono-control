@@ -64,17 +64,19 @@ fork is already expressible as an `upstream` entry in the repo def's named
 
 ## How it's applied
 
-The layout is consumed by [`conform`](conform.md) — specifically `conform swap <pc>`,
-which makes the workspace match this document. Each member becomes a `present-as-is`
-[layout-target](../../data/layout-target.md) at its declared `location`, and the whole
-set is handed to the shared source → layout pipeline (`apply_target`). Placement only —
-no ref is checked out (ref intent arrives later, with state conforms). Materialization
-is [non-destructive](../../layout/README.md) and per-member independent, like every
-layout reconcile, so one blocked member never corrupts the others.
+The layout is consumed by [`conform`](conform.md) — chiefly `conform relayout`, which
+reconciles the workspace to this document. Each member becomes a `present-as-is`
+[layout-target](../../data/layout-target.md) at its declared `location`, and the set is
+handed to the shared source → layout pipeline (`apply_target`) as **one exclusive
+reconcile**: missing members are placed, ones no longer in the layout are retired, and
+already-correct repos are left untouched. Placement only — no ref is checked out (ref
+intent arrives later, with state conforms). Materialization is
+[non-destructive](../../layout/README.md) and per-member independent, so one blocked member
+never corrupts the others.
 
-Bootstrapping order is inherent: the cluster repo must be materialized first (so its
-`default-layout.json` is checked out and readable), *then* conforming to the layout
-brings the member repos on disk.
+Bootstrapping order is inherent: the cluster is **acquired** (into offline if absent) and
+its `default-layout.json` read *before* the members are reconciled — see
+[`conform`](conform.md) for how `relayout` and `swap` build on it.
 
 ## Deferred for now
 

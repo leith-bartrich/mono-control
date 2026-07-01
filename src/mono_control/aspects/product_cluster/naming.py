@@ -1,6 +1,6 @@
 """The product-cluster's default subdir name (mat target).
 
-Per docs/design/layers/repo-aspects/product-cluster.md, a cluster materializes
+Per docs/design/layers/repo-aspects/product-cluster/README.md, a cluster materializes
 by default at ``mono-repos/products/<name>`` where ``<name>`` is a friendly,
 **mutable** local alias derived from the repo's ``name`` field — not from its
 slug. This is intentional: the slug carries an immutable identity-uniqueness

@@ -24,11 +24,16 @@ its own, simpler thing (a flat "make available" list), not a state to converge t
 
 Additively and idempotently — re-running is always safe:
 
-1. **Resolve a source** — which named remote to use (the default-source convention
-   is still TBD).
-2. **absent locally → create** into `mono-repos-offline/<slug>` — **clone** the
-   source, or **init** a brand-new repo with no remote (where the stamps are applied
-   — see below).
+1. **Resolve the source and the ref.** The *remote* comes from the repo's governed
+   [sources](../data/repo.md#sources) — the canonical (`origin` if it's ours, else
+   `upstream`), or our writable `fork-ours` where our own work is involved. The *ref* is
+   the repo's **`dev`** line ([its `dev` branch](../data/repo.md#branches) — the remote's
+   default branch unless overridden). For now `dev` is the **only** ref the engine
+   resolves; **failing to resolve or check out `dev` is an error**, never a silent
+   fallback.
+2. **absent locally → create** into `mono-repos-offline/<slug>` — **clone** the source
+   with its working tree **on `dev`**, or **init** a brand-new repo with no remote (where
+   the stamps are applied — see below).
 3. **already present** (offline or materialized) → **fetch** from the source to
    refresh the requested refs.
 4. **Verify** the requested refs now exist; a missing source or ref fails *that
@@ -76,4 +81,9 @@ then the [layout engine](../layout/README.md) (arrange the local layout). The
 layout-target is the shared origin: the source engine derives *what to acquire* from
 it, the layout engine reconciles *how to arrange* against it.
 
-Fetch policy, multi-source / default-source resolution, and auth are **TBD**.
+Source resolution follows the governed [sources](../data/repo.md#sources) vocabulary, and
+the ref is always [`dev`](../data/repo.md#branches) (above). Leaving every checkout **on
+`dev`** hands the [layout engine](../layout/README.md) a clean, correctly-reffed checkout
+to simply *place* — placement-only. More opinionated ref work (advancing to a pinned
+commit, pulls) is a **later layer that runs after the layout engine**, not part of
+acquisition. Fetch policy and auth remain **TBD**.

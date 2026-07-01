@@ -5,7 +5,10 @@ Principles (see ``docs/design/layers/layout/README.md``):
 - **Failure-as-guard.** Let the rename fail if the destination exists rather
   than check-then-act.
 - **Atomic placement.** Use ``os.rename`` (single syscall on POSIX); a
-  partially-moved tree never appears.
+  partially-moved tree never appears. Across filesystems (``EXDEV`` — e.g. the
+  container's separate mono-repos / mono-repos-offline mounts) fall back to a
+  copy that still *publishes* atomically (copy to a temp dir on the destination
+  filesystem, then rename it into place).
 - **Minimize the window.** Re-check destructive preconditions immediately
   before the rename / checkout.
 - **No partial state surprise.** Within a multi-step action (move + checkout),
@@ -22,7 +25,9 @@ since those become outcomes rather than exceptions.
 
 from __future__ import annotations
 
+import errno
 import os
+import shutil
 from pathlib import Path
 
 from ...git import GitError, GitRepo, UnmanagedCheckoutError
@@ -36,26 +41,55 @@ from .result import LayoutOutcome
 
 
 def _move(src: Path, dst: Path) -> None:
-    """Atomic-rename ``src`` → ``dst``; raise specific errors for known failures.
+    """Move ``src`` → ``dst``, publishing atomically; raise typed errors.
+
+    Fast path is ``os.rename`` (a single syscall — no partially-moved tree ever
+    appears). When ``src`` and ``dst`` live on different filesystems (``EXDEV``
+    — common in the container, where mono-repos and mono-repos-offline are
+    separate mounts) ``os.rename`` can't cross the boundary, so fall back to a
+    copy that still publishes atomically (see :func:`_move_cross_device`).
 
     ``DestinationOccupiedError`` covers both the pre-check and the
     failure-as-guard race (``os.rename`` refuses to overwrite a non-empty dir
     on POSIX and any dir on Windows). ``MoveFailedError`` wraps other OS-level
-    failures (permissions, cross-device, source vanished).
+    failures (permissions, source vanished, a failed cross-device copy).
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
         raise DestinationOccupiedError(dst)
     try:
         os.rename(src, dst)
+        return
     except FileExistsError as e:
         raise DestinationOccupiedError(dst) from e
     except OSError as e:
         # ENOTEMPTY is POSIX's "rename onto non-empty dir"; treat as a race-style
         # destination-occupied case for consistent reporting.
-        if e.errno is not None and e.errno == 39:  # errno.ENOTEMPTY
+        if e.errno == errno.ENOTEMPTY:
             raise DestinationOccupiedError(dst) from e
+        if e.errno != errno.EXDEV:
+            raise MoveFailedError(src, dst, str(e)) from e
+    # Cross-device: os.rename can't span filesystems — copy, then publish atomically.
+    _move_cross_device(src, dst)
+
+
+def _move_cross_device(src: Path, dst: Path) -> None:
+    """Move across filesystems while preserving destination atomicity.
+
+    Copy ``src`` to a temp directory on ``dst``'s filesystem, then ``os.rename``
+    it into place (atomic, same-filesystem) and remove ``src``. A crash during
+    the copy leaves only the hidden temp dir — ``dst`` never appears partially
+    built. Symlinks are preserved rather than followed.
+    """
+    tmp = dst.parent / f".{dst.name}.tmp-move"
+    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        shutil.copytree(src, tmp, symlinks=True)
+        os.rename(tmp, dst)  # atomic publish on the destination filesystem
+    except OSError as e:
+        shutil.rmtree(tmp, ignore_errors=True)
         raise MoveFailedError(src, dst, str(e)) from e
+    shutil.rmtree(src)
 
 
 def _verify_slug(checkout: Path, expected_slug: str) -> None:

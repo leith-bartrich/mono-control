@@ -141,6 +141,31 @@ def test_mat_moveto_then_demat_round_trip(workspace, tmp_path):
     assert (offline_root / "cluster1" / ".git").is_dir()
 
 
+def test_demat_blocks_dirty_cluster(workspace, tmp_path):
+    """A dirty product-cluster blocks demat (its committed state anchors reproducibility)."""
+    config_dir, workspace_root, _ = workspace
+    origin = tmp_path / "origin"
+    _origin(origin, branch="main")
+    store = RepoStore.from_config_dir(config_dir)
+    store.create(
+        Repo(
+            version=1,
+            slug="dc",
+            name="dc",
+            sources={"origin": str(origin)},
+            aspects={"product-cluster"},
+        )
+    )
+    assert _invoke(["mat", "moveto", "dc"], config_dir=config_dir).exit_code == 0
+    placed = workspace_root / "products" / "dc"
+    (placed / "README.md").write_text("uncommitted\n")  # dirty the cluster
+
+    res = _invoke(["demat", "dc"], config_dir=config_dir)
+    assert res.exit_code != 0
+    assert "uncommitted changes" in res.output
+    assert (placed / ".git").is_dir()  # not retired
+
+
 def test_mat_moveto_refuses_unmarked_repo(workspace):
     config_dir, _, _ = workspace
     store = RepoStore.from_config_dir(config_dir)
@@ -234,3 +259,14 @@ def test_aspect_is_registered_top_level():
 
     names = {a.name for a in REGISTERED_ASPECTS}
     assert "product-cluster" in names
+
+
+def test_manage_command_registered():
+    """`product-cluster manage` is wired — the interactive peer of `repo manage`."""
+    result = runner.invoke(cluster_app, ["--help"])
+    assert result.exit_code == 0
+    assert "manage" in result.output
+    # the interactive module imports cleanly (no circular import through actions)
+    from mono_control.aspects.product_cluster import manager_ui
+
+    assert hasattr(manager_ui, "manage")

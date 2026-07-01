@@ -7,3 +7,6 @@ build/
 
 # macOS Finder metadata
 .DS_Store
+
+# Claude Code local settings + scheduler state (harness files, not project content)
+.claude/

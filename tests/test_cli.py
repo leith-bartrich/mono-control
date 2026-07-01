@@ -14,6 +14,8 @@ def test_version():
 def test_status_runs():
     result = runner.invoke(app, ["status"])
     assert result.exit_code == 0
+    # reports all three managed workspace dirs, including the offline holding area
+    assert "mono-repos-offline" in result.output
 
 
 def test_no_args_shows_help():

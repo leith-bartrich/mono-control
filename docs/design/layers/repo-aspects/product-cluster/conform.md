@@ -8,13 +8,24 @@ Every sub-intent names a different target; the verb is always "make reality matc
 (the surface syntax below is illustrative — see [Grammar](#grammar-open), which is open):
 
 ```text
+mproj control product-cluster conform relayout [pc] # target: a cluster's layout — the core verb
 mproj control product-cluster conform clear         # target: empty workspace
-mproj control product-cluster conform swap <pc>     # target: <pc>'s layout (structure)
+mproj control product-cluster conform swap <pc>     # target: <pc>'s layout from a clean slate (clear + relayout)
 mproj control product-cluster conform <state> [pc]  # target: a named ref-state (draft)
 mproj control product-cluster conform artifact-version <name>  # target: a snapshot, by kind (anticipated)
 ```
 
 ## Sub-intents
+
+### conform relayout \[pc]
+
+The **core verb**: incrementally reconcile the workspace to a cluster's
+[layout](layout.md) — pull in members that are missing, retire members no longer in the
+layout, and **leave everything already correct untouched**. It is a single exclusive
+reconcile (`pre_clear=True` over `{cluster ∪ members}`): no teardown, minimal churn. Reach
+for it after editing a layout, or any time you want the workspace to match what the cluster
+declares. `[pc]` defaults to the sole materialized cluster; naming one that isn't placed
+yet materializes it first.
 
 ### conform clear
 
@@ -22,18 +33,20 @@ Reset the **whole workspace** — member repos *and* product clusters — to emp
 the exclusive target `LayoutTarget(pre_clear=True, targets={})`: every materialized repo
 reconciles to absent.
 
-It is **not a force**. Clearing is [non-destructive](../../layout/README.md) — repos
-retire to `mono-repos-offline/`, preserving unpushed work — and the
-[layout engine](../../layout/README.md) **refuses** any removal it cannot do safely (e.g. a
-dirty working tree) rather than discarding work. There is no `--force`.
+Retire is *inherently* [non-destructive](../../layout/README.md): it **moves** a checkout to
+`mono-repos-offline/`, so even uncommitted work rides along and is restored on re-place —
+there is nothing for the engine to refuse, and no `--force`. The one guard is the
+[dirty-cluster gate](#the-dirty-cluster-gate): `clear` is refused if any materialized
+product cluster has uncommitted changes.
 
 ### conform swap \<pc>
 
-Switch the workspace to a different cluster: `clear`, then materialize `<pc>` and conform
-the workspace to its [`default-layout.json`](layout.md) — **placement only**, no refs. It
-deliberately stops at structure, leaving a clean stage for a subsequent state conform.
-Bootstrapping order is inherent: the cluster materializes first (so its layout is
-readable), then its members are laid out.
+Switch to a **different** cluster from a clean slate — **`clear` then `relayout <pc>`**,
+with `<pc>` **acquired up front (fail-early)** so an unreachable cluster aborts *before*
+anything is torn down. The `clear` removes the current cluster (and everything else)
+*before* the new one lands, so two clusters are never placed at once — a guarantee
+`relayout` alone can't make while *switching*. (For the *same* cluster there's no switch
+and no window, so just use `relayout`.) Placement only, no refs.
 
 ### conform \<state>  *(draft concept)*
 
@@ -66,26 +79,49 @@ mproj control product-cluster conform artifact-version <version-snapshot-name>
 — an example shape, not a decision. How snapshot kinds, sources, and storage are addressed
 is unworked; laid out here as a **likely** intent.
 
+## The dirty-cluster gate
+
+`clear`, `relayout`, and `swap` reconcile or tear down the workspace, and
+[`demat`](README.md) retires one cluster. All **refuse when a product cluster they would
+retire has uncommitted changes**.
+
+A product cluster is a non-opaque *data* repo whose **committed** state is the
+reproducibility anchor — the layout you're in is only durably reproducible if the cluster is
+committed. Tearing it down dirty would pin the current state to nothing but an uncommitted
+working tree in offline. Member repos are **exempt**: their work is preserved by the move to
+offline and restored on re-place, so a dirty member clears fine. Commit (or stash) the
+cluster first. (The gate lives in the aspect, not the layout engine — retire is always safe
+for the engine; only the aspect knows a repo is a reproducibility-bearing cluster.)
+
+Because the gate guards *reproducibility*, not data — the work is safe in offline either way
+— it has an **escape hatch**: `--allow-dirty` on the CLI proceeds regardless, and the
+interactive manager prompts *"cluster X is dirty — proceed anyway?"* when it would trip.
+Overriding just accepts "this teardown isn't reproducibly pinned"; there's no
+retype-to-confirm ceremony, because nothing is lost.
+
 ## The implied cluster
 
 When a sub-intent needs a cluster and one isn't given, it resolves to the **sole
 materialized product cluster** when exactly one is present. With **zero, or more than
 one**, mono-control errors and asks you to name it — it never guesses. `clear` needs no
-cluster.
+cluster. (`relayout` defaults to the sole materialized cluster; `swap` names its target
+explicitly, since it's switching to one that may not be present yet. The `layout` verbs use
+the same implied resolution via their `--cluster` default.)
 
 ## Grammar *(open)*
 
 The exact command grammar is **not settled** — what follows is a sketch, not a decision.
-A natural shape is *mode-first* (`conform <mode> [args]`, with `clear` / `swap` as
-keywords and any other leading token read as a state name), but that presumes things we
+A natural shape is *mode-first* (`conform <mode> [args]`, with `relayout` / `clear` / `swap`
+as keywords and any other leading token read as a state name), but that presumes things we
 haven't worked out: a shared namespace between reserved sub-intents and state names, and
 that a cluster is targeted via `swap` rather than by being named bare. How states,
 pc-names, and reserved words share the command line falls out of the named-state design
 push, still to come.
 
-## Buildable now vs. next
+## Primitives vs. draft
 
-`clear` and `swap` rest entirely on what already exists — the [layout](layout.md) document,
-the `pre_clear` exclusivity flag on [layout-target](../../data/layout-target.md), and the
-shared `apply_target` pipeline — so they can land without new engine work. `conform
-<state>` waits on the named-state / convention design and stays a draft until then.
+`relayout` and `clear` are the two primitives; `swap` is their composition (`clear` +
+`relayout`). All rest on the [layout](layout.md) document, the `pre_clear` flag on
+[layout-target](../../data/layout-target.md), a source-only `acquire`, and the shared
+`apply_target` pipeline — no new engine work. `conform <state>` and the snapshot targets
+remain **draft**, awaiting the named-state / convention design.

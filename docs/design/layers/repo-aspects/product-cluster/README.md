@@ -66,8 +66,15 @@ subdir. (The [git layer](../../git/README.md) provides the primitives.)
 
 Its code lives in `src/mono_control/aspects/product_cluster/` and it is invoked as
 `mproj control product-cluster <verb>` (per the
-[aspect code & CLI layout](../README.md)). The verbs:
+[aspect code & CLI layout](../README.md)). Following the two-surface
+[UI convention](../../../ui/README.md), every verb is scriptable **and** reachable from a
+menu-driven interactive flow — and the interactive path is the **primary** one for
+day-to-day use. The scriptable and interactive surfaces are thin presentations over one
+shared logic layer (`actions.py`), so they cannot drift.
 
+- **manage** — the top-level **interactive** manager (the peer of `repo manage`): a menu
+  over the declared clusters that drives the verbs below — `init` / `mark`, place / swap /
+  demat, and a dive into `layout manage` — from a TTY. The recommended everyday entry point.
 - **list-available** — the repos declaring the aspect, from config (no checkout).
 - **init / mark** — bring a new cluster into being (init via the source engine) or
   mark the aspect on an existing [repo def](../../data/repo.md).
@@ -83,28 +90,34 @@ Its code lives in `src/mono_control/aspects/product_cluster/` and it is invoked 
   - `mat layout-target <name> --location L [--branch B | --commit C]` —
     declarative one-liner combining placement and ref intent.
 - **demat** — retire the cluster (its `products/<subdir>` → offline) via the
-  layout engine; non-destructive.
+  layout engine; non-destructive, and refused if the cluster is dirty (the
+  [dirty-cluster gate](conform.md#the-dirty-cluster-gate)).
 
 The verbs above operate on the cluster *as a repo* — acquire it, place it, check it
 out. Two further groups operate on the cluster's *content* and on the *workspace* it
 describes, both following the same two-surface
 [UI convention](../../../ui/README.md) (scriptable verbs plus an interactive `manage`).
 
-**`layout`** — author and inspect the cluster's [layout](layout.md) document:
+**`layout`** — author and inspect the cluster's [layout](layout.md) document (the cluster
+is a `--cluster` / `-c` option that defaults to the sole materialized one):
 
 - **layout show** — render the authored layout (members, locations, roles).
-- **layout manage** — interactive authoring (add / remove / relocate members, set a
-  member's role), with scriptable counterparts under `layout`.
-- **layout validate** — schema + existence checks (every member resolves to a live
-  repo def).
+- **layout add `<member>` `--location` `--role` dev\|dep** — add or update a member.
+- **layout remove `<member>`** — drop a member.
+- **layout validate** — every member resolves to a live repo def.
+- **layout manage** — interactive authoring (the questionary `manage` flow).
 
 **[`conform`](conform.md)** — make the *workspace* match a target (a peer of
 `mat` / `demat`, but acting on the workspace rather than the cluster repo):
 
-- **conform clear** — reset the whole workspace (members and pcs) to empty;
-  non-destructive, and never forced — the layout engine refuses unsafe removals.
-- **conform swap `<pc>`** — clear, then lay out `<pc>`'s default layout (placement
-  only), ready for a state conform.
+- **conform relayout `[pc]`** — the **core verb**: reconcile the workspace to a cluster's
+  layout (pull missing members, retire ones no longer in it, leave correct ones untouched);
+  one exclusive reconcile, no teardown.
+- **conform clear** — reset the whole workspace (members and clusters) to empty;
+  non-destructive (repos retire to offline). Refused if any materialized cluster is dirty
+  (its committed state anchors reproducibility); `--allow-dirty` overrides.
+- **conform swap `<pc>`** — switch to a *different* cluster from a clean slate: `clear` then
+  `relayout <pc>`, with the target acquired up front (fail-early). Placement only.
 - **conform `<state>`** *(draft)* — advance the laid-out workspace to a named ref-state
   (e.g. `dev-latest`); awaits the named-state design.
 - **conform to a snapshot** *(anticipated)* — reconstruct a captured

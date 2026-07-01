@@ -2,9 +2,11 @@
 
 ``apply_target`` is the single layout-target orchestrator: scan, run the
 source engine, re-scan, run the layout engine, return both reports. Every
-mat / demat verb builds its own ``LayoutTarget`` and hands it here. ``init``
-and ``mark_aspect`` are the two verbs that *don't* fit that shape (one
-creates a repo def, one toggles a flag).
+mat / demat verb builds its own ``LayoutTarget`` and hands it here.
+``acquire`` runs the source half alone (clone/fetch into offline, no
+placement) for callers that need a repo present before deciding placement.
+``init`` and ``mark_aspect`` are the two verbs that *don't* fit that shape
+(one creates a repo def, one toggles a flag).
 """
 
 from __future__ import annotations
@@ -94,6 +96,31 @@ def apply_target(
         offline_root=offline_root,
     )
     return source_report, layout_report
+
+
+def acquire(
+    slugs: set[str],
+    *,
+    repo_store: RepoStore,
+    workspace_root: Path,
+    offline_root: Path,
+    profile: FsProfile,
+) -> source_engine.SourceReport:
+    """Acquire repos into offline (clone / init / fetch) **without placing them**.
+
+    The source half of :func:`apply_target` used on its own — when a caller needs
+    a repo present locally to read its contents before deciding placement (e.g.
+    reading a product cluster's layout before a swap tears the workspace down, so
+    an unreachable cluster fails *before* anything is cleared).
+    """
+    inventory = scan(workspace_root, offline_root)
+    return source_engine.run(
+        source_engine.SourceRequest(refs_by_slug={s: set() for s in slugs}),
+        repo_store=repo_store,
+        inventory=inventory,
+        offline_root=offline_root,
+        profile=profile,
+    )
 
 
 def mark_aspect(slug: str, aspect_name: str, *, repo_store: RepoStore) -> bool:

@@ -12,7 +12,7 @@ from rich.table import Table
 from mono_control.aspects import attach_aspect_commands
 from mono_control.config import ConfigError, RepoStore, load_config
 from mono_control.host_platform import require_valid as require_valid_host_platform
-from mono_control.paths import CONFIG_DIR, REPOS_DIR
+from mono_control.paths import CONFIG_DIR, OFFLINE_DIR, REPOS_DIR
 from mono_control.sandbox import require_container
 
 from .config import config_app
@@ -67,7 +67,7 @@ def _root(
 def status(ctx: typer.Context) -> None:
     """Report which managed workspace directories are visible."""
     table = Table("status", "path", show_edge=False, box=None)
-    for path in (ctx.obj, REPOS_DIR):
+    for path in (ctx.obj, REPOS_DIR, OFFLINE_DIR):
         if path.is_dir():
             table.add_row("[green]ok[/green]", str(path))
         else:
