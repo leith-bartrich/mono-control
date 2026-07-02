@@ -167,6 +167,27 @@ def test_ahead_behind(tmp_path):
     assert (ahead, behind) == (1, 0)
 
 
+def test_set_remote_adds_new_remote(tmp_path):
+    _make_origin(tmp_path / "origin")
+    repo = clone(
+        tmp_path / "origin", tmp_path / "dest", profile=LINUXISH, slug="demo"
+    )
+    repo.set_remote("fork-ours", "https://example.com/fork.git")
+    url = run_git(["remote", "get-url", "fork-ours"], cwd=tmp_path / "dest")
+    assert url == "https://example.com/fork.git"
+
+
+def test_set_remote_repoints_existing_remote(tmp_path):
+    _make_origin(tmp_path / "origin")
+    repo = clone(
+        tmp_path / "origin", tmp_path / "dest", profile=LINUXISH, slug="demo"
+    )
+    repo.set_remote("fork-ours", "https://example.com/first.git")
+    repo.set_remote("fork-ours", "https://example.com/second.git")
+    url = run_git(["remote", "get-url", "fork-ours"], cwd=tmp_path / "dest")
+    assert url == "https://example.com/second.git"
+
+
 def test_ls_remote_known_and_unknown_ref(tmp_path):
     head = _make_origin(tmp_path / "origin")
     assert ls_remote(tmp_path / "origin", "HEAD") == head

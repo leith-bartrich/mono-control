@@ -84,6 +84,21 @@ class GitRepo:
         """Check out ``ref`` (a branch, tag, or commit)."""
         self._git("checkout", ref)
 
+    def set_remote(self, name: str, url: str) -> None:
+        """Add remote ``name`` → ``url``, or repoint it if the name already exists.
+
+        The chokepoint for conforming a declared named source into
+        ``.git/config`` — used by the eager stamp at fork-transition time and,
+        eventually, by engine remote conformance. Membership is checked first
+        (rather than catching a failed ``remote add``) so real failures aren't
+        masked as "already exists".
+        """
+        existing = self._git("remote").splitlines()
+        if name in existing:
+            self._git("remote", "set-url", name, url)
+        else:
+            self._git("remote", "add", name, url)
+
     def ahead_behind(self, ref: str) -> tuple[int, int]:
         """``(ahead, behind)`` of HEAD relative to ``ref`` (via ``rev-list --count``)."""
         out = self._git("rev-list", "--left-right", "--count", f"{ref}...HEAD")
