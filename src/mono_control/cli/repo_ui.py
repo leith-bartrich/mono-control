@@ -16,16 +16,16 @@ from mono_control.host_platform import profile as host_profile
 console = Console()
 
 _ADD = "[+ add new repo]"
-_QUIT = "[quit]"
+_EXIT = "[exit repo manager]"
 _BACK = "[back]"
 
 
 def manage(store: RepoStore) -> None:
-    """Run the interactive repo-management loop until the user quits."""
+    """Run the interactive repo-management loop until the user exits."""
     while True:
         slugs = store.list(include_retired=True)
-        choice = questionary.select("Repos", choices=[*slugs, _ADD, _QUIT]).ask()
-        if choice in (None, _QUIT):
+        choice = questionary.select("Repos", choices=[*slugs, _ADD, _EXIT]).ask()
+        if choice in (None, _EXIT):
             return
         if choice == _ADD:
             _add(store)

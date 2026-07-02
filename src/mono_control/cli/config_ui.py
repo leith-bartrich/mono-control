@@ -17,17 +17,17 @@ from mono_control.config import ConfigError, WorkspaceConfig, load_config, save_
 
 console = Console()
 
-_QUIT = "[quit]"
+_EXIT = "[exit config manager]"
 
 
 def manage(config_dir: Path) -> None:
-    """Run the interactive workspace-config loop until the user quits."""
+    """Run the interactive workspace-config loop until the user exits."""
     while True:
         action = questionary.select(
             "Workspace config",
-            choices=["view", "validate", "save default", _QUIT],
+            choices=["view", "validate", "save default", _EXIT],
         ).ask()
-        if action in (None, _QUIT):
+        if action in (None, _EXIT):
             return
         if action == "view":
             _view(config_dir)
