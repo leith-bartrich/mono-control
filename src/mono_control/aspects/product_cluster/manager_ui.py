@@ -26,7 +26,7 @@ ASPECT = "product-cluster"
 _NEW = "[+ new cluster]"
 _MARK = "[mark existing repo]"
 _CLEAR = "[clear workspace]"
-_QUIT = "[quit]"
+_EXIT = "[exit product-cluster manager]"
 _BACK = "[back]"
 _CONFORM = "conform ▸"
 
@@ -42,7 +42,7 @@ def _confirm_dirty(dirty: list[str]) -> bool:
 
 
 def manage(store: RepoStore) -> None:
-    """Run the interactive product-cluster manager until the user quits."""
+    """Run the interactive product-cluster manager until the user exits."""
     while True:
         inv = scan(paths.REPOS_DIR, paths.OFFLINE_DIR)
         by_label: dict[str, object] = {}
@@ -54,9 +54,9 @@ def manage(store: RepoStore) -> None:
             by_label[label] = repo
             choices.append(label)
         choice = questionary.select(
-            "Product clusters", choices=[*choices, _NEW, _MARK, _CLEAR, _QUIT]
+            "Product clusters", choices=[*choices, _NEW, _MARK, _CLEAR, _EXIT]
         ).ask()
-        if choice in (None, _QUIT):
+        if choice in (None, _EXIT):
             return
         if choice == _NEW:
             _new(store)

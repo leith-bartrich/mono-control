@@ -18,7 +18,7 @@ from .cluster_layout import ClusterLayout, ClusterLayoutStore, LayoutMember
 console = Console()
 
 _ADD = "[+ add member]"
-_QUIT = "[quit]"
+_EXIT = "[exit layout manager]"
 _CANCEL = "[cancel]"
 
 
@@ -32,7 +32,7 @@ def _member_candidates(repo_store: RepoStore, cluster_slug: str) -> list[str]:
 
 
 def manage(store: ClusterLayoutStore, repo_store: RepoStore, cluster_slug: str) -> None:
-    """Run the interactive layout-authoring loop until the user quits.
+    """Run the interactive layout-authoring loop until the user exits.
 
     ``cluster_slug`` is the cluster being edited; it is never offered as one of its
     own members.
@@ -42,9 +42,9 @@ def manage(store: ClusterLayoutStore, repo_store: RepoStore, cluster_slug: str) 
         _show(layout)
         choice = questionary.select(
             "Layout",
-            choices=[*(f"remove {s}" for s in sorted(layout.members)), _ADD, _QUIT],
+            choices=[*(f"remove {s}" for s in sorted(layout.members)), _ADD, _EXIT],
         ).ask()
-        if choice in (None, _QUIT):
+        if choice in (None, _EXIT):
             return
         if choice == _ADD:
             _add(store, repo_store, cluster_slug)
