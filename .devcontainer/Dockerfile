@@ -42,6 +42,46 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # it applies in the headless path too, which runs no VS Code lifecycle hooks.
 RUN git config --system --add safe.directory '*'
 
+# GitHub credential helper (see docs/design/github-auth.md).
+#
+# mono-control clones private repos over HTTPS, so git needs a credential. The
+# container cannot obtain one itself — the host's is in an OS keyring a Linux
+# container cannot reach — so the shim supplies MONO_CONTROL_GITHUB_TOKEN per
+# invocation and this helper hands it to git.
+#
+# It reads the token from the ENVIRONMENT and never persists it. That is the
+# whole point: the obvious shortcut (`url.insteadOf` with an embedded token)
+# would write the credential into every clone's .git/config — files that live on
+# the HOST via the bind mounts, where they would persist indefinitely.
+#
+# Registered ONLY for https://github.com. This is load-bearing, not decorative:
+# whatever URL ends up in a repo definition — a typo, a bad PR into mono-config,
+# a compromised upstream — git will never hand the token to another host.
+#
+# Written inline rather than COPYed because .dockerignore excludes .devcontainer/.
+RUN printf '%s\n' \
+        '#!/bin/sh' \
+        '# git credential helper for mono-control. Supplies MONO_CONTROL_GITHUB_TOKEN,' \
+        '# read from the environment so it is never written to any .git/config.' \
+        '# Registered for https://github.com only (see git config --system, below).' \
+        '[ "$1" = "get" ] || exit 0' \
+        '[ -n "$MONO_CONTROL_GITHUB_TOKEN" ] || exit 0' \
+        'echo "username=x-access-token"' \
+        'echo "password=$MONO_CONTROL_GITHUB_TOKEN"' \
+        > /usr/local/bin/git-credential-mono \
+    && chmod 0755 /usr/local/bin/git-credential-mono \
+    && git config --system credential."https://github.com".helper mono
+
+# Never let git block on an interactive prompt. Without a usable credential the
+# old behavior was to prompt on the container's TTY — which is how a missing token
+# presented as a mysterious "Username for 'https://github.com':" rather than an
+# error. Fail loudly instead; mono-control maps the result to a typed GitAuthError.
+#
+# Baked as a persistent ENV: like MONO_CONTROL_HOST_PLATFORM=generic, this is an
+# operational default with no security meaning. The TOKEN itself is a secret and is
+# deliberately baked as neither ENV nor ARG — it arrives only at run time.
+ENV GIT_TERMINAL_PROMPT=0
+
 # Where the baked mono-control environment lives. DELIBERATELY outside
 # /workspaces/mono-control: dev mode bind-mounts live source over that path, which
 # would shadow an in-tree .venv and leave the tool unrunnable. (The shim already

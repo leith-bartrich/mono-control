@@ -108,6 +108,38 @@ Docker Compose (the `environment:` key in
 modes — and every process inside the container — inherit it, and there is
 nothing to remember to turn on.
 
+## GitHub authentication
+
+Managed repos are usually private, so cloning them needs a credential — and the
+container cannot get one itself: your host's lives in an OS keyring (Windows
+Credential Manager, the macOS Keychain, `gh`'s store) that a Linux container cannot
+reach. The credential is therefore **handed in per invocation** by the shim, as
+`MONO_CONTROL_GITHUB_TOKEN`.
+
+You do not normally set this yourself. `mproj` resolves a token host-side: it uses
+`MONO_CONTROL_GITHUB_TOKEN` if you have exported one, and otherwise falls back to
+your `gh auth token` (warning when it does).
+
+**Prefer a scoped token.** mono-control never writes to a remote — it only clones,
+fetches refs, and checks out — so a **fine-grained PAT with read-only Contents,
+limited to the repos you manage**, is all it needs. A `gh` OAuth token, by contrast,
+carries `repo` + `workflow` + `gist` *write* access to everything you own. Export the
+scoped one and the fallback never fires:
+
+```sh
+export MONO_CONTROL_GITHUB_TOKEN=github_pat_...
+```
+
+The token is read from the environment by a credential helper baked into the image
+and is **never written to disk** — in particular, never into a clone's `.git/config`,
+which lives on your host via the bind mount and would persist there indefinitely. The
+helper is registered for `https://github.com` **only**, so a wrong or malicious remote
+URL in a repo definition can never be handed your token. Without a usable credential
+git fails loudly (`GitAuthError`, naming both ways out) rather than prompting.
+
+Full rationale, including what a stolen token would and would not buy an attacker:
+[docs/design/github-auth.md](docs/design/github-auth.md).
+
 ## Dev container
 
 Interactive development happens inside the container via VS Code Dev Containers
