@@ -2,18 +2,16 @@
 # tool, shared by both use modes:
 #
 #   Mode 1 (interactive dev): devcontainer.json layers docker-compose.devcontainer.yml
-#     on top of this, bind-mounting live source and the sibling workspace dirs.
+#     on top of this, bind-mounting live source only (for edit-immediacy).
 #   Mode 2 (headless): the host `mproj` shim runs `docker compose run --rm` against
-#     THIS file alone, supplying the workspace's mono-config / mono-repos as per-run
-#     `-v` bind mounts whose host paths it resolves at call time. The container-side
-#     targets are fixed at /workspaces/mono-config and /workspaces/mono-repos to
-#     match src/mono_control/paths.py.
+#     THIS file alone.
 #
-# What lives here is exactly what both modes share: the image, the sandbox
-# sentinel, and the run context. mono-control itself is baked INTO the image (see
-# the Dockerfile), so it needs no mount in the headless path. The mutable
-# workspace dirs are intentionally NOT mounted here — dev adds them via the
-# overlay, headless adds them per-run via the shim.
+# Step 2: the container performs NO git / filesystem / mono-config effects itself —
+# it calls back to a host-side broker over JSON-RPC. The shim stands up that broker
+# and injects its coordinates (MONO_BROKER_HOST / PORT / TOKEN) per run; git runs
+# natively on the host. So there are NO workspace bind mounts in EITHER mode, and
+# the container holds no credential. mono-control itself is baked INTO the image
+# (see the Dockerfile), so it needs no source mount in the headless path.
 services:
   mono-control:
     build:
