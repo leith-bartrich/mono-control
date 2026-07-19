@@ -12,12 +12,11 @@ from rich.console import Console
 
 from mono_control import paths, repo_ops
 from mono_control.config import ConfigError, RepoStore
-from mono_control.host_platform import profile as host_profile
 from mono_control.on_disk import scan
 
 from ..registry import discover_repos
 from . import actions
-from .cluster_layout import ClusterLayoutError, ClusterLayoutStore, resolve_cluster_checkout
+from .cluster_layout import ClusterLayoutError, ClusterLayoutStore, require_cluster_present
 from .layout_ui import manage as manage_layout
 
 console = Console()
@@ -44,7 +43,7 @@ def _confirm_dirty(dirty: list[str]) -> bool:
 def manage(store: RepoStore) -> None:
     """Run the interactive product-cluster manager until the user exits."""
     while True:
-        inv = scan(paths.REPOS_DIR, paths.OFFLINE_DIR)
+        inv = scan(store.broker, paths.REPOS_DIR, paths.OFFLINE_DIR)
         by_label: dict[str, object] = {}
         choices: list[str] = []
         for repo in discover_repos(store, ASPECT):
@@ -80,9 +79,7 @@ def _new(store: RepoStore) -> None:
             name,
             aspects={ASPECT},
             repo_store=store,
-            workspace_root=paths.REPOS_DIR,
-            offline_root=paths.OFFLINE_DIR,
-            profile=host_profile(),
+            broker=store.broker,
         )
     except (ConfigError, ValueError, RuntimeError) as e:
         console.print(f"[red]error:[/red] {e}")
@@ -133,7 +130,8 @@ def _manage_one(store: RepoStore, repo) -> None:
             actions.demat(repo, store=store, console=console, on_dirty=_confirm_dirty)
         elif action == "edit layout":
             try:
-                checkout = resolve_cluster_checkout(
+                require_cluster_present(
+                    store.broker,
                     repo.slug,
                     workspace_root=paths.REPOS_DIR,
                     offline_root=paths.OFFLINE_DIR,
@@ -141,7 +139,7 @@ def _manage_one(store: RepoStore, repo) -> None:
             except ClusterLayoutError as e:
                 console.print(f"[red]error:[/red] {e}")
                 continue
-            manage_layout(ClusterLayoutStore(checkout), store, repo.slug)
+            manage_layout(ClusterLayoutStore(store.broker, repo.slug), store, repo.slug)
 
 
 def _conform_menu(store: RepoStore, repo) -> None:

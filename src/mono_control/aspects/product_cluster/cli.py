@@ -18,6 +18,7 @@ from rich.console import Console
 from rich.table import Table
 
 from mono_control import paths, repo_ops
+from mono_control.app_context import AppContext
 from mono_control.config import (
     AmbiguousNameError,
     ConfigConflictError,
@@ -26,7 +27,6 @@ from mono_control.config import (
     RepoStore,
     resolve_repo,
 )
-from mono_control.host_platform import profile as host_profile
 from mono_control.layout_target import (
     LayoutTarget,
     LayoutTargetPresentAsIs,
@@ -42,7 +42,7 @@ from .cluster_layout import (
     ClusterLayoutError,
     ClusterLayoutStore,
     LayoutMember,
-    resolve_cluster_checkout,
+    require_cluster_present,
 )
 
 console = Console()
@@ -57,8 +57,12 @@ _ALLOW_DIRTY = typer.Option(
 )
 
 
+def _app(ctx: typer.Context) -> AppContext:
+    return ctx.obj
+
+
 def _store(ctx: typer.Context) -> RepoStore:
-    return RepoStore.from_config_dir(ctx.obj)
+    return RepoStore(_app(ctx).broker)
 
 
 def _fail(message: object) -> typer.Exit:
@@ -137,7 +141,7 @@ def current(
             data={
                 "slug": repo.slug,
                 "name": repo.name,
-                "location": _observed_materialized_location(repo),
+                "location": _observed_materialized_location(ctx, repo),
             }
         )
     else:
@@ -180,9 +184,7 @@ def init(
             slug=slug,
             aspects={ASPECT},
             repo_store=store,
-            workspace_root=paths.REPOS_DIR,
-            offline_root=paths.OFFLINE_DIR,
-            profile=host_profile(),
+            broker=_app(ctx).broker,
         )
     except (ConfigConflictError, ConfigError) as e:
         raise _fail(e)
@@ -213,9 +215,9 @@ mat_app = typer.Typer(
 app.add_typer(mat_app, name="mat")
 
 
-def _observed_materialized_location(repo: Repo) -> str:
+def _observed_materialized_location(ctx: typer.Context, repo: Repo) -> str:
     """Return the cluster's current subdir under REPOS_DIR, or fail."""
-    inv = scan(paths.REPOS_DIR, paths.OFFLINE_DIR)
+    inv = scan(_app(ctx).broker, paths.REPOS_DIR, paths.OFFLINE_DIR)
     observed = inv.repos.get(repo.slug)
     if observed is None or observed.state != "materialized":
         raise _fail(
@@ -274,7 +276,7 @@ def mat_branchat(
     """Check out a branch's head at the cluster's current location."""
     repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
     _require_aspect(repo)
-    location = _observed_materialized_location(repo)
+    location = _observed_materialized_location(ctx, repo)
     target = LayoutTarget(
         targets={
             repo.slug: LayoutTargetPresentBranchHead(branch=branch, location=location),
@@ -295,7 +297,7 @@ def mat_commit(
     """Check out a specific commit (detached HEAD) at the cluster's current location."""
     repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
     _require_aspect(repo)
-    location = _observed_materialized_location(repo)
+    location = _observed_materialized_location(ctx, repo)
     target = LayoutTarget(
         targets={
             repo.slug: LayoutTargetPresentCommit(commit=commit, location=location),
@@ -373,7 +375,7 @@ def _resolve_cluster(
         repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
         _require_aspect(repo)
         return repo
-    inv = scan(paths.REPOS_DIR, paths.OFFLINE_DIR)
+    inv = scan(_app(ctx).broker, paths.REPOS_DIR, paths.OFFLINE_DIR)
     materialized = [
         repo
         for repo in discover_repos(store, ASPECT)
@@ -390,17 +392,19 @@ def _resolve_cluster(
     raise _fail(f"multiple materialized product-clusters ({slugs}); name one")
 
 
-def _layout_store_for(repo: Repo) -> ClusterLayoutStore:
-    """Build a layout store rooted at ``repo``'s materialized checkout, or fail."""
+def _layout_store_for(ctx: typer.Context, repo: Repo) -> ClusterLayoutStore:
+    """Build a broker-backed layout store for ``repo``'s materialized cluster, or fail."""
+    broker = _app(ctx).broker
     try:
-        checkout = resolve_cluster_checkout(
+        require_cluster_present(
+            broker,
             repo.slug,
             workspace_root=paths.REPOS_DIR,
             offline_root=paths.OFFLINE_DIR,
         )
     except ClusterLayoutError as e:
         raise _fail(e)
-    return ClusterLayoutStore(checkout)
+    return ClusterLayoutStore(broker, repo.slug)
 
 
 # --------------------------------------------------------------------------- #
@@ -491,7 +495,7 @@ def _validate_role(value: str) -> str:
 def layout_show(ctx: typer.Context, cluster: str = _CLUSTER_OPT) -> None:
     """Show a cluster's authored layout (members, locations, roles)."""
     repo = _resolve_cluster(ctx, cluster)
-    layout = _layout_store_for(repo).load_or_empty()
+    layout = _layout_store_for(ctx, repo).load_or_empty()
     if not layout.members:
         console.print(f"no layout authored for {repo.slug}")
         return
@@ -516,7 +520,7 @@ def layout_add(
     """Add or update a member in the cluster's layout."""
     repo = _resolve_cluster(ctx, cluster)
     member_repo = _resolve(ctx, member, slug_only=False)  # must resolve to a repo def
-    store = _layout_store_for(repo)
+    store = _layout_store_for(ctx, repo)
     layout = store.load_or_empty()
     layout.members[member_repo.slug] = LayoutMember(location=location, role=role)
     store.save(layout)
@@ -531,7 +535,7 @@ def layout_remove(
 ) -> None:
     """Remove a member from the cluster's layout."""
     repo = _resolve_cluster(ctx, cluster)
-    store = _layout_store_for(repo)
+    store = _layout_store_for(ctx, repo)
     layout = store.load_or_empty()
     # Accept a slug already in the layout (survives a purged def) or a resolvable name.
     key = member if member in layout.members else _resolve(ctx, member, slug_only=False).slug
@@ -546,7 +550,7 @@ def layout_remove(
 def layout_validate(ctx: typer.Context, cluster: str = _CLUSTER_OPT) -> None:
     """Check that every layout member resolves to a live repo def."""
     repo = _resolve_cluster(ctx, cluster)
-    store = _layout_store_for(repo)
+    store = _layout_store_for(ctx, repo)
     try:
         layout = store.load()
     except ClusterLayoutError as e:
@@ -562,7 +566,7 @@ def layout_validate(ctx: typer.Context, cluster: str = _CLUSTER_OPT) -> None:
 def layout_manage(ctx: typer.Context, cluster: str = _CLUSTER_OPT) -> None:
     """Interactively author a cluster's layout (menu-driven; needs a TTY)."""
     repo = _resolve_cluster(ctx, cluster)
-    store = _layout_store_for(repo)
+    store = _layout_store_for(ctx, repo)
     from .layout_ui import manage as run_manage
 
     run_manage(store, _store(ctx), repo.slug)

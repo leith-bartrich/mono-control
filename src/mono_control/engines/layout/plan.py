@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Literal
 
 from ...base_models import StrictModel
-from ...git import GitRepo
 from ...layout_target import (
     DesiredState,
     LayoutTarget,
@@ -40,18 +39,18 @@ class PlanItem(StrictModel):
     reason: str | None = None  # populated when blocked
 
 
-def _resolve_branch_head(checkout: Path, branch: str) -> str | None:
-    """Look up a branch's commit in a local checkout (post-fetch).
+def _resolve_branch_head(
+    slug: str, branch: str, resolved_refs: dict[str, dict[str, str]]
+) -> str | None:
+    """Look up a branch's commit in the acquire-resolved ref map (plain data).
 
-    Prefers ``refs/remotes/origin/<branch>`` (the remote-tracking ref the
-    source engine refreshes on every fetch — *the latest, loose* intent),
-    falling back to ``refs/heads/<branch>`` (the local branch — useful for
-    init-only repos with no remote). ``None`` if neither resolves.
+    The source engine's ``acquire`` verb ran before planning and returned, per
+    slug, the concrete commit each requested ref resolved to. A branch-head
+    target requests ``refs/heads/<branch>`` (see ``from_layout_target``), so its
+    commit is read straight from that map — no git call, keeping ``plan()`` pure.
+    ``None`` if the branch was not resolved (absent locally / not fetched).
     """
-    repo = GitRepo(checkout)
-    return repo.resolve_ref(f"refs/remotes/origin/{branch}") or repo.resolve_ref(
-        f"refs/heads/{branch}"
-    )
+    return resolved_refs.get(slug, {}).get(f"refs/heads/{branch}")
 
 
 def _plan_present(
@@ -60,10 +59,11 @@ def _plan_present(
     desired: LayoutTargetPresentCommit | LayoutTargetPresentBranchHead,
     *,
     workspace_root: Path,
+    resolved_refs: dict[str, dict[str, str]],
 ) -> PlanItem:
     target_location = workspace_root / desired.location
 
-    # Resolve the desired commit, using whatever checkout we already have.
+    # Resolve the desired commit from plan-time data (never a git read).
     resolved: str | None
     if isinstance(desired, LayoutTargetPresentCommit):
         resolved = desired.commit
@@ -78,7 +78,7 @@ def _plan_present(
                 action="none",
                 reason=f"{slug!r} is absent; cannot resolve branch {desired.branch!r}",
             )
-        resolved = _resolve_branch_head(observed.location, desired.branch)
+        resolved = _resolve_branch_head(slug, desired.branch, resolved_refs)
         if resolved is None:
             return PlanItem(
                 slug=slug,
@@ -261,12 +261,17 @@ def plan(
     inventory: OnDiskInventory,
     *,
     workspace_root: Path,
+    resolved_refs: dict[str, dict[str, str]] | None = None,
 ) -> list[PlanItem]:
     """Classify every (observed, desired) pair into a ``PlanItem``.
 
-    With ``pre_clear=True`` every materialized repo not named in the target
-    becomes an implicit retire.
+    Pure data — no filesystem writes, no network, no git reads. ``resolved_refs``
+    is the ``{slug: {ref: commit}}`` map the source engine's ``acquire`` produced;
+    it supplies the concrete commit for a ``PresentBranchHead`` target. With
+    ``pre_clear=True`` every materialized repo not named in the target becomes an
+    implicit retire.
     """
+    resolved_refs = resolved_refs or {}
     items: list[PlanItem] = []
     handled_slugs: set[str] = set()
 
@@ -282,7 +287,13 @@ def plan(
             )
         else:
             items.append(
-                _plan_present(slug, observed, desired, workspace_root=workspace_root)
+                _plan_present(
+                    slug,
+                    observed,
+                    desired,
+                    workspace_root=workspace_root,
+                    resolved_refs=resolved_refs,
+                )
             )
         handled_slugs.add(slug)
 

@@ -20,12 +20,19 @@ SourceStatus = Literal[
 
 
 class SourceOutcome(StrictModel):
-    """One repo's source-engine result."""
+    """One repo's source-engine result.
+
+    ``resolved`` maps each requested ref to the concrete commit the broker
+    resolved it to (post clone/fetch). It rides here as plain data so a later
+    ``plan()`` can pin a ``PresentBranchHead`` target's commit without any git
+    read of its own.
+    """
 
     slug: str
     status: SourceStatus
     summary: str
     unresolved_refs: set[str] = set()
+    resolved: dict[str, str] = {}
 
 
 class SourceReport(StrictModel):

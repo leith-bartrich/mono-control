@@ -8,10 +8,8 @@ the unit tests exercise.
 import questionary
 from rich.console import Console
 
-from mono_control import paths, repo_ops
+from mono_control import repo_ops
 from mono_control.config import ConfigError, Repo, RepoStore, make_slug
-from mono_control.git import GitError, remote_default_branch
-from mono_control.host_platform import profile as host_profile
 
 console = Console()
 
@@ -72,9 +70,7 @@ def _add_new(store: RepoStore, name: str, slug: str) -> None:
         branches={"dev": dev},
         initial_branch=dev,
         repo_store=store,
-        workspace_root=paths.REPOS_DIR,
-        offline_root=paths.OFFLINE_DIR,
-        profile=host_profile(),
+        broker=store.broker,
     )
     console.print(f"[green]created[/green] {resolved_slug} (dev = {dev})")
     repo_ops.render_outcomes(f"init {resolved_slug}", report.outcomes, console=console)
@@ -110,19 +106,15 @@ def _add_existing(store: RepoStore, name: str, slug: str) -> None:
 
 
 def _prompt_dev_from_remote(url: str) -> str | None:
-    """Probe the remote's default branch and offer it for `dev`; else ask (blank skips)."""
-    try:
-        default = remote_default_branch(url)
-    except GitError:
-        console.print("[yellow](couldn't read the remote; specify the dev branch)[/yellow]")
-        default = None
-    if default and questionary.confirm(
-        f"The remote's default branch is {default!r} — use it as `dev`?", default=True
-    ).ask():
-        return default
+    """Ask for the `dev` branch (blank skips).
+
+    The container holds no network git and never talks to the remote directly, so
+    it no longer probes the remote's default branch here — the broker resolves URLs
+    and refs when a repo is later acquired. The name is simply prompted for.
+    """
+    del url  # the container cannot reach the remote; kept for signature stability
     return (
-        questionary.text("dev branch name (blank to skip):", default=default or "").ask()
-        or ""
+        questionary.text("dev branch name (blank to skip):").ask() or ""
     ).strip() or None
 
 

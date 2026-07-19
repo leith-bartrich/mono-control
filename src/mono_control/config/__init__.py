@@ -9,7 +9,7 @@ from .errors import (
     ConfigValidationError,
     ConfigVersionError,
 )
-from .loader import load_config, save_config
+from .loader import load_config, save_config, system_exists
 from .models import (
     Repo,
     VersionedModel,
@@ -23,6 +23,7 @@ from .repo_store import RepoStore, resolve_repo
 __all__ = [
     "load_config",
     "save_config",
+    "system_exists",
     "WorkspaceConfig",
     "VersionedModel",
     "Repo",

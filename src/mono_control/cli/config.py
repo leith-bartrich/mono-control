@@ -14,13 +14,14 @@ slot in as the model grows.
 import typer
 from rich.console import Console
 
+from mono_control.app_context import AppContext
 from mono_control.config import (
     ConfigError,
     WorkspaceConfig,
     load_config,
     save_config,
+    system_exists,
 )
-from mono_control.paths import SYSTEM_FILE
 
 console = Console()
 
@@ -35,8 +36,9 @@ def _fail(message: object) -> None:
 @config_app.command()
 def show(ctx: typer.Context) -> None:
     """Load and display the workspace config."""
+    app_ctx: AppContext = ctx.obj
     try:
-        config = load_config(ctx.obj)
+        config = load_config(app_ctx.broker)
     except ConfigError as e:
         _fail(e)
     console.print(f"[bold]workspace config[/bold] (version {config.version})")
@@ -45,8 +47,9 @@ def show(ctx: typer.Context) -> None:
 @config_app.command()
 def validate(ctx: typer.Context) -> None:
     """Validate just the workspace config (system.json)."""
+    app_ctx: AppContext = ctx.obj
     try:
-        load_config(ctx.obj)
+        load_config(app_ctx.broker)
     except ConfigError as e:
         _fail(e)
     console.print("[green]ok:[/green] workspace config is valid")
@@ -55,15 +58,17 @@ def validate(ctx: typer.Context) -> None:
 @config_app.command()
 def init(ctx: typer.Context) -> None:
     """Create a default system.json, refusing to overwrite an existing one."""
-    if (ctx.obj / SYSTEM_FILE).exists():
-        _fail(f"{SYSTEM_FILE} already exists")
-    save_config(WorkspaceConfig(version=1), ctx.obj)
-    console.print(f"[green]created[/green] {SYSTEM_FILE}")
+    app_ctx: AppContext = ctx.obj
+    if system_exists(app_ctx.broker):
+        _fail("system.json already exists")
+    save_config(WorkspaceConfig(version=1), app_ctx.broker)
+    console.print("[green]created[/green] system.json")
 
 
 @config_app.command()
 def manage(ctx: typer.Context) -> None:
     """Interactively manage the workspace config (menu-driven)."""
+    app_ctx: AppContext = ctx.obj
     from .config_ui import manage as run_manage
 
-    run_manage(ctx.obj)
+    run_manage(app_ctx.broker)
