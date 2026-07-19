@@ -1,43 +1,19 @@
-"""Tests for `product-cluster conform clear / swap`."""
+"""Tests for `product-cluster conform clear / swap / relayout` (via the shim broker)."""
 
 import json
 from pathlib import Path
 
-import pytest
 from typer.testing import CliRunner
 
-from mono_control import paths
+from broker_shim import GitRepo, clone, run_git, PROFILE
 from mono_control.aspects.product_cluster.cli import app as cluster_app
 from mono_control.config import Repo, RepoStore
-from mono_control.git import GitRepo, clone
-from mono_control.git.runner import run_git
-from mono_control.host_platform import FsProfile
 
 runner = CliRunner()
-PROFILE = FsProfile(filemode=True, symlinks=True, ignorecase=False)
 
 
-@pytest.fixture(autouse=True)
-def _git_identity(monkeypatch):
-    for who in ("AUTHOR", "COMMITTER"):
-        monkeypatch.setenv(f"GIT_{who}_NAME", "Test")
-        monkeypatch.setenv(f"GIT_{who}_EMAIL", "test@example.com")
-
-
-@pytest.fixture
-def workspace(tmp_path, monkeypatch):
-    config_dir = tmp_path / "config"
-    ws = tmp_path / "ws"
-    off = tmp_path / "off"
-    ws.mkdir()
-    off.mkdir()
-    monkeypatch.setattr(paths, "REPOS_DIR", ws)
-    monkeypatch.setattr(paths, "OFFLINE_DIR", off)
-    return config_dir, ws, off
-
-
-def _invoke(args, *, config_dir: Path):
-    return runner.invoke(cluster_app, args, obj=config_dir)
+def _invoke(env, args):
+    return runner.invoke(cluster_app, args, obj=env.app)
 
 
 def _origin(path: Path, branch: str = "main") -> str:
@@ -63,8 +39,8 @@ def _cluster_origin(path: Path, members: dict, branch: str = "main") -> str:
     return run_git(["rev-parse", "HEAD"], cwd=path)
 
 
-def _seed(config_dir: Path, slug: str, origin: Path, *, aspects=None) -> None:
-    RepoStore.from_config_dir(config_dir).create(
+def _seed(env, slug: str, origin: Path, *, aspects=None) -> None:
+    RepoStore(env.broker).create(
         Repo(
             version=1,
             slug=slug,
@@ -75,8 +51,8 @@ def _seed(config_dir: Path, slug: str, origin: Path, *, aspects=None) -> None:
     )
 
 
-def test_conform_swap_materializes_cluster_and_members(workspace, tmp_path):
-    config_dir, ws, _ = workspace
+def test_conform_swap_materializes_cluster_and_members(broker_env, tmp_path):
+    env = broker_env
     _origin(tmp_path / "m1o")
     _origin(tmp_path / "m2o")
     _cluster_origin(
@@ -86,120 +62,114 @@ def test_conform_swap_materializes_cluster_and_members(workspace, tmp_path):
             "m2": {"location": "libs/m2", "role": "dep"},
         },
     )
-    _seed(config_dir, "m1", tmp_path / "m1o")
-    _seed(config_dir, "m2", tmp_path / "m2o")
-    _seed(config_dir, "cluster1", tmp_path / "clo", aspects={"product-cluster"})
+    _seed(env, "m1", tmp_path / "m1o")
+    _seed(env, "m2", tmp_path / "m2o")
+    _seed(env, "cluster1", tmp_path / "clo", aspects={"product-cluster"})
 
-    res = _invoke(["conform", "swap", "cluster1"], config_dir=config_dir)
+    res = _invoke(env, ["conform", "swap", "cluster1"])
     assert res.exit_code == 0, res.output
-    assert (ws / "products" / "cluster1" / ".git").is_dir()
-    assert GitRepo(ws / "src" / "m1").slug() == "m1"
-    assert GitRepo(ws / "libs" / "m2").slug() == "m2"
+    assert (env.ws / "products" / "cluster1" / ".git").is_dir()
+    assert GitRepo(env.ws / "src" / "m1").slug() == "m1"
+    assert GitRepo(env.ws / "libs" / "m2").slug() == "m2"
 
 
-def test_conform_swap_pre_clears_extras(workspace, tmp_path):
-    config_dir, ws, off = workspace
-    # an extra repo already materialized, not part of the cluster layout
+def test_conform_swap_pre_clears_extras(broker_env, tmp_path):
+    env = broker_env
     _origin(tmp_path / "extrao")
-    clone(tmp_path / "extrao", ws / "extra", profile=PROFILE, slug="extra")
-    _seed(config_dir, "extra", tmp_path / "extrao")
+    clone(tmp_path / "extrao", env.ws / "extra", profile=PROFILE, slug="extra")
+    _seed(env, "extra", tmp_path / "extrao")
 
     _cluster_origin(tmp_path / "clo", {})  # empty layout: just the cluster
-    _seed(config_dir, "cluster1", tmp_path / "clo", aspects={"product-cluster"})
+    _seed(env, "cluster1", tmp_path / "clo", aspects={"product-cluster"})
 
-    res = _invoke(["conform", "swap", "cluster1"], config_dir=config_dir)
+    res = _invoke(env, ["conform", "swap", "cluster1"])
     assert res.exit_code == 0, res.output
-    assert (ws / "products" / "cluster1" / ".git").is_dir()
-    # extra retired to offline (non-destructive), gone from the workspace
-    assert not (ws / "extra").exists()
-    assert (off / "extra" / ".git").is_dir()
+    assert (env.ws / "products" / "cluster1" / ".git").is_dir()
+    assert not (env.ws / "extra").exists()
+    assert (env.off / "extra" / ".git").is_dir()
 
 
-def test_conform_clear_retires_all(workspace, tmp_path):
-    config_dir, ws, off = workspace
+def test_conform_clear_retires_all(broker_env, tmp_path):
+    env = broker_env
     _origin(tmp_path / "ao")
-    clone(tmp_path / "ao", ws / "alpha", profile=PROFILE, slug="alpha")
-    _seed(config_dir, "alpha", tmp_path / "ao")
+    clone(tmp_path / "ao", env.ws / "alpha", profile=PROFILE, slug="alpha")
+    _seed(env, "alpha", tmp_path / "ao")
 
-    res = _invoke(["conform", "clear"], config_dir=config_dir)
+    res = _invoke(env, ["conform", "clear"])
     assert res.exit_code == 0, res.output
-    assert not (ws / "alpha").exists()
-    assert (off / "alpha" / ".git").is_dir()
+    assert not (env.ws / "alpha").exists()
+    assert (env.off / "alpha" / ".git").is_dir()
 
 
-def test_conform_clear_is_nondestructive_for_dirty(workspace, tmp_path):
+def test_conform_clear_is_nondestructive_for_dirty(broker_env, tmp_path):
     """Retire moves to offline (preserving work), so a dirty repo clears safely."""
-    config_dir, ws, off = workspace
+    env = broker_env
     _origin(tmp_path / "ao")
-    clone(tmp_path / "ao", ws / "alpha", profile=PROFILE, slug="alpha")
-    _seed(config_dir, "alpha", tmp_path / "ao")
-    (ws / "alpha" / "README.md").write_text("uncommitted change\n")  # dirty (tracked)
+    clone(tmp_path / "ao", env.ws / "alpha", profile=PROFILE, slug="alpha")
+    _seed(env, "alpha", tmp_path / "ao")
+    (env.ws / "alpha" / "README.md").write_text("uncommitted change\n")  # dirty
 
-    res = _invoke(["conform", "clear"], config_dir=config_dir)
+    res = _invoke(env, ["conform", "clear"])
     assert res.exit_code == 0, res.output
-    assert not (ws / "alpha").exists()
-    assert (off / "alpha" / ".git").is_dir()
-    # the uncommitted change rode along to offline
-    assert (off / "alpha" / "README.md").read_text() == "uncommitted change\n"
+    assert not (env.ws / "alpha").exists()
+    assert (env.off / "alpha" / ".git").is_dir()
+    assert (env.off / "alpha" / "README.md").read_text() == "uncommitted change\n"
 
 
-def test_conform_swap_requires_aspect(workspace, tmp_path):
-    config_dir, _, _ = workspace
-    RepoStore.from_config_dir(config_dir).create(
-        Repo(version=1, slug="plain", name="plain")
-    )
-    res = _invoke(["conform", "swap", "plain"], config_dir=config_dir)
+def test_conform_swap_requires_aspect(broker_env, tmp_path):
+    env = broker_env
+    RepoStore(env.broker).create(Repo(version=1, slug="plain", name="plain"))
+    res = _invoke(env, ["conform", "swap", "plain"])
     assert res.exit_code != 0
     assert "does not declare" in res.output
 
 
-def test_conform_clear_blocks_dirty_cluster(workspace, tmp_path):
+def test_conform_clear_blocks_dirty_cluster(broker_env, tmp_path):
     """A dirty product-cluster blocks clear (its committed state anchors reproducibility)."""
-    config_dir, ws, _ = workspace
+    env = broker_env
     _origin(tmp_path / "pco")
-    _seed(config_dir, "pc1", tmp_path / "pco", aspects={"product-cluster"})
-    assert _invoke(["mat", "moveto", "pc1"], config_dir=config_dir).exit_code == 0
-    (ws / "products" / "pc1" / "README.md").write_text("uncommitted\n")  # dirty cluster
+    _seed(env, "pc1", tmp_path / "pco", aspects={"product-cluster"})
+    assert _invoke(env, ["mat", "moveto", "pc1"]).exit_code == 0
+    (env.ws / "products" / "pc1" / "README.md").write_text("uncommitted\n")
 
-    res = _invoke(["conform", "clear"], config_dir=config_dir)
+    res = _invoke(env, ["conform", "clear"])
     assert res.exit_code != 0
     assert "pc1" in res.output
-    assert (ws / "products" / "pc1" / ".git").is_dir()  # untouched
+    assert (env.ws / "products" / "pc1" / ".git").is_dir()  # untouched
 
 
-def test_conform_swap_blocks_dirty_cluster(workspace, tmp_path):
-    config_dir, ws, _ = workspace
+def test_conform_swap_blocks_dirty_cluster(broker_env, tmp_path):
+    env = broker_env
     _origin(tmp_path / "ao")
-    _seed(config_dir, "pca", tmp_path / "ao", aspects={"product-cluster"})
-    assert _invoke(["mat", "moveto", "pca"], config_dir=config_dir).exit_code == 0
-    (ws / "products" / "pca" / "README.md").write_text("dirty\n")
+    _seed(env, "pca", tmp_path / "ao", aspects={"product-cluster"})
+    assert _invoke(env, ["mat", "moveto", "pca"]).exit_code == 0
+    (env.ws / "products" / "pca" / "README.md").write_text("dirty\n")
 
     _cluster_origin(tmp_path / "bo", {})
-    _seed(config_dir, "pcb", tmp_path / "bo", aspects={"product-cluster"})
+    _seed(env, "pcb", tmp_path / "bo", aspects={"product-cluster"})
 
-    res = _invoke(["conform", "swap", "pcb"], config_dir=config_dir)
+    res = _invoke(env, ["conform", "swap", "pcb"])
     assert res.exit_code != 0
     assert "pca" in res.output
-    assert (ws / "products" / "pca" / ".git").is_dir()  # not torn down
+    assert (env.ws / "products" / "pca" / ".git").is_dir()  # not torn down
 
 
-def test_conform_swap_unreachable_cluster_leaves_workspace(workspace, tmp_path):
+def test_conform_swap_unreachable_cluster_leaves_workspace(broker_env, tmp_path):
     """Sourcing the cluster first means an unreachable one fails before any clear."""
-    config_dir, ws, _ = workspace
+    env = broker_env
     _origin(tmp_path / "ao")
-    clone(tmp_path / "ao", ws / "alpha", profile=PROFILE, slug="alpha")
-    _seed(config_dir, "alpha", tmp_path / "ao")
-    # cluster whose source path does not exist → acquire fails up front
-    _seed(config_dir, "pcbad", tmp_path / "missing", aspects={"product-cluster"})
+    clone(tmp_path / "ao", env.ws / "alpha", profile=PROFILE, slug="alpha")
+    _seed(env, "alpha", tmp_path / "ao")
+    _seed(env, "pcbad", tmp_path / "missing", aspects={"product-cluster"})
 
-    res = _invoke(["conform", "swap", "pcbad"], config_dir=config_dir)
+    res = _invoke(env, ["conform", "swap", "pcbad"])
     assert res.exit_code != 0
-    assert (ws / "alpha" / ".git").is_dir()  # workspace NOT cleared
+    assert (env.ws / "alpha" / ".git").is_dir()  # workspace NOT cleared
 
 
-def test_relayout_applies_layout_delta(workspace, tmp_path):
+def test_relayout_applies_layout_delta(broker_env, tmp_path):
     """relayout pulls in missing members, retires extras, leaves the cluster in place."""
-    config_dir, ws, off = workspace
+    env = broker_env
     _origin(tmp_path / "m1o")
     _origin(tmp_path / "m2o")
     _cluster_origin(
@@ -209,63 +179,61 @@ def test_relayout_applies_layout_delta(workspace, tmp_path):
             "m2": {"location": "libs/m2", "role": "dep"},
         },
     )
-    _seed(config_dir, "m1", tmp_path / "m1o")
-    _seed(config_dir, "m2", tmp_path / "m2o")
-    _seed(config_dir, "cluster1", tmp_path / "clo", aspects={"product-cluster"})
-    # materialize the cluster; its committed layout rides along
-    assert _invoke(["mat", "moveto", "cluster1"], config_dir=config_dir).exit_code == 0
-    # a pre-existing extra repo not in the layout
+    _seed(env, "m1", tmp_path / "m1o")
+    _seed(env, "m2", tmp_path / "m2o")
+    _seed(env, "cluster1", tmp_path / "clo", aspects={"product-cluster"})
+    assert _invoke(env, ["mat", "moveto", "cluster1"]).exit_code == 0
     _origin(tmp_path / "extrao")
-    clone(tmp_path / "extrao", ws / "extra", profile=PROFILE, slug="extra")
-    _seed(config_dir, "extra", tmp_path / "extrao")
+    clone(tmp_path / "extrao", env.ws / "extra", profile=PROFILE, slug="extra")
+    _seed(env, "extra", tmp_path / "extrao")
 
-    res = _invoke(["conform", "relayout", "cluster1"], config_dir=config_dir)
+    res = _invoke(env, ["conform", "relayout", "cluster1"])
     assert res.exit_code == 0, res.output
-    assert (ws / "products" / "cluster1" / ".git").is_dir()  # cluster untouched
-    assert GitRepo(ws / "src" / "m1").slug() == "m1"          # members pulled in
-    assert GitRepo(ws / "libs" / "m2").slug() == "m2"
-    assert not (ws / "extra").exists()                        # extra retired
-    assert (off / "extra" / ".git").is_dir()
+    assert (env.ws / "products" / "cluster1" / ".git").is_dir()
+    assert GitRepo(env.ws / "src" / "m1").slug() == "m1"
+    assert GitRepo(env.ws / "libs" / "m2").slug() == "m2"
+    assert not (env.ws / "extra").exists()
+    assert (env.off / "extra" / ".git").is_dir()
 
 
-def test_relayout_allows_dirty_target_cluster(workspace, tmp_path):
+def test_relayout_allows_dirty_target_cluster(broker_env, tmp_path):
     """relayout keeps the target cluster, so its dirtiness must NOT gate (unlike clear/swap)."""
-    config_dir, ws, _ = workspace
+    env = broker_env
     _origin(tmp_path / "m1o")
     _cluster_origin(tmp_path / "clo", {"m1": {"location": "src/m1", "role": "dev"}})
-    _seed(config_dir, "m1", tmp_path / "m1o")
-    _seed(config_dir, "cluster1", tmp_path / "clo", aspects={"product-cluster"})
-    assert _invoke(["mat", "moveto", "cluster1"], config_dir=config_dir).exit_code == 0
-    (ws / "products" / "cluster1" / "README.md").write_text("uncommitted\n")  # dirty cluster
+    _seed(env, "m1", tmp_path / "m1o")
+    _seed(env, "cluster1", tmp_path / "clo", aspects={"product-cluster"})
+    assert _invoke(env, ["mat", "moveto", "cluster1"]).exit_code == 0
+    (env.ws / "products" / "cluster1" / "README.md").write_text("uncommitted\n")
 
-    res = _invoke(["conform", "relayout", "cluster1"], config_dir=config_dir)
-    assert res.exit_code == 0, res.output  # not gated — cluster stays placed
-    assert (ws / "products" / "cluster1" / ".git").is_dir()
-    assert GitRepo(ws / "src" / "m1").slug() == "m1"
+    res = _invoke(env, ["conform", "relayout", "cluster1"])
+    assert res.exit_code == 0, res.output
+    assert (env.ws / "products" / "cluster1" / ".git").is_dir()
+    assert GitRepo(env.ws / "src" / "m1").slug() == "m1"
 
 
-def test_relayout_implied_cluster(workspace, tmp_path):
-    config_dir, ws, _ = workspace
+def test_relayout_implied_cluster(broker_env, tmp_path):
+    env = broker_env
     _origin(tmp_path / "m1o")
     _cluster_origin(tmp_path / "clo", {"m1": {"location": "m1", "role": "dev"}})
-    _seed(config_dir, "m1", tmp_path / "m1o")
-    _seed(config_dir, "cluster1", tmp_path / "clo", aspects={"product-cluster"})
-    assert _invoke(["mat", "moveto", "cluster1"], config_dir=config_dir).exit_code == 0
+    _seed(env, "m1", tmp_path / "m1o")
+    _seed(env, "cluster1", tmp_path / "clo", aspects={"product-cluster"})
+    assert _invoke(env, ["mat", "moveto", "cluster1"]).exit_code == 0
 
-    res = _invoke(["conform", "relayout"], config_dir=config_dir)  # no arg → sole cluster
+    res = _invoke(env, ["conform", "relayout"])  # no arg → sole cluster
     assert res.exit_code == 0, res.output
-    assert GitRepo(ws / "m1").slug() == "m1"
+    assert GitRepo(env.ws / "m1").slug() == "m1"
 
 
-def test_conform_clear_allow_dirty_override(workspace, tmp_path):
-    config_dir, ws, off = workspace
+def test_conform_clear_allow_dirty_override(broker_env, tmp_path):
+    env = broker_env
     _origin(tmp_path / "pco")
-    _seed(config_dir, "pc1", tmp_path / "pco", aspects={"product-cluster"})
-    assert _invoke(["mat", "moveto", "pc1"], config_dir=config_dir).exit_code == 0
-    (ws / "products" / "pc1" / "README.md").write_text("dirty\n")
+    _seed(env, "pc1", tmp_path / "pco", aspects={"product-cluster"})
+    assert _invoke(env, ["mat", "moveto", "pc1"]).exit_code == 0
+    (env.ws / "products" / "pc1" / "README.md").write_text("dirty\n")
 
-    assert _invoke(["conform", "clear"], config_dir=config_dir).exit_code != 0  # gated
-    res = _invoke(["conform", "clear", "--allow-dirty"], config_dir=config_dir)  # override
+    assert _invoke(env, ["conform", "clear"]).exit_code != 0  # gated
+    res = _invoke(env, ["conform", "clear", "--allow-dirty"])  # override
     assert res.exit_code == 0, res.output
-    assert not (ws / "products" / "pc1").exists()
-    assert (off / "pc1" / ".git").is_dir()
+    assert not (env.ws / "products" / "pc1").exists()
+    assert (env.off / "pc1" / ".git").is_dir()

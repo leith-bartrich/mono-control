@@ -1,11 +1,20 @@
+"""Layout engine: pure plan() classification + broker-dispatch execution.
+
+``plan()`` is pure data (no git), tested by feeding synthetic inventories and the
+acquire-resolved ref map. ``run()``/``execute()`` dispatch to the broker's layout
+verbs — the happy paths run against the real-effect shim; the composite/edge
+outcomes (partial, race-aborted, propagation) run against canned fake responses.
+"""
+
 from pathlib import Path
 
 import pytest
 
-from mono_control.engines.layout import run
-from mono_control.git import clone
-from mono_control.git.runner import run_git
-from mono_control.host_platform import FsProfile
+from broker_shim import GitRepo, ShimBroker, clone, init, run_git, PROFILE
+from mono_control.broker import FakeBroker
+from mono_control.engines.layout import plan, run
+from mono_control.engines.layout.execute import execute
+from mono_control.on_disk import OnDiskInventory, OnDiskRepo, scan
 from mono_control.layout_target import (
     LayoutTarget,
     LayoutTargetAbsent,
@@ -13,501 +22,235 @@ from mono_control.layout_target import (
     LayoutTargetPresentBranchHead,
     LayoutTargetPresentCommit,
 )
-from mono_control.on_disk import scan
 
-PROFILE = FsProfile(filemode=True, symlinks=True, ignorecase=False)
-
-
-@pytest.fixture(autouse=True)
-def _git_identity(monkeypatch):
-    monkeypatch.setenv("GIT_AUTHOR_NAME", "Test")
-    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "test@example.com")
-    monkeypatch.setenv("GIT_COMMITTER_NAME", "Test")
-    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "test@example.com")
+WS = Path("/ws")
 
 
+def _repo(slug, location, state, commit="c0ffee", dirty=False):
+    return OnDiskRepo(slug=slug, location=location, state=state, commit=commit, dirty=dirty)
+
+
+# --------------------------------------------------------------------------- #
+# Pure plan() classification
+# --------------------------------------------------------------------------- #
+def test_plan_place_from_offline():
+    inv = OnDiskInventory(repos={"a": _repo("a", Path("/off/a"), "offline")})
+    target = LayoutTarget(targets={"a": LayoutTargetPresentCommit(commit="dead", location="a")})
+    (item,) = plan(target, inv, workspace_root=WS)
+    assert item.action == "place"
+    assert item.classification == "actionable"
+    assert item.resolved_commit == "dead"
+    assert item.target_location == WS / "a"
+
+
+def test_plan_satisfied_when_in_place_at_commit():
+    inv = OnDiskInventory(repos={"a": _repo("a", WS / "a", "materialized", commit="dead")})
+    target = LayoutTarget(targets={"a": LayoutTargetPresentCommit(commit="dead", location="a")})
+    (item,) = plan(target, inv, workspace_root=WS)
+    assert item.classification == "satisfied"
+    assert item.action == "none"
+
+
+def test_plan_checkout_on_ref_change():
+    inv = OnDiskInventory(repos={"a": _repo("a", WS / "a", "materialized", commit="old")})
+    target = LayoutTarget(targets={"a": LayoutTargetPresentCommit(commit="new", location="a")})
+    (item,) = plan(target, inv, workspace_root=WS)
+    assert item.action == "checkout"
+    assert item.resolved_commit == "new"
+
+
+def test_plan_blocks_dirty_ref_change():
+    inv = OnDiskInventory(
+        repos={"a": _repo("a", WS / "a", "materialized", commit="old", dirty=True)}
+    )
+    target = LayoutTarget(targets={"a": LayoutTargetPresentCommit(commit="new", location="a")})
+    (item,) = plan(target, inv, workspace_root=WS)
+    assert item.classification == "blocked"
+    assert "dirty" in item.reason
+
+
+def test_plan_relocate_to_new_location():
+    inv = OnDiskInventory(repos={"a": _repo("a", WS / "old", "materialized", commit="dead")})
+    target = LayoutTarget(targets={"a": LayoutTargetPresentCommit(commit="dead", location="new")})
+    (item,) = plan(target, inv, workspace_root=WS)
+    assert item.action == "relocate"
+    assert item.target_location == WS / "new"
+
+
+def test_plan_retire_via_absent():
+    inv = OnDiskInventory(repos={"a": _repo("a", WS / "a", "materialized")})
+    target = LayoutTarget(targets={"a": LayoutTargetAbsent()})
+    (item,) = plan(target, inv, workspace_root=WS)
+    assert item.action == "retire"
+
+
+def test_plan_branch_head_uses_resolved_map():
+    inv = OnDiskInventory(repos={"a": _repo("a", Path("/off/a"), "offline")})
+    target = LayoutTarget(
+        targets={"a": LayoutTargetPresentBranchHead(branch="main", location="a")}
+    )
+    resolved = {"a": {"refs/heads/main": "beef123"}}
+    (item,) = plan(target, inv, workspace_root=WS, resolved_refs=resolved)
+    assert item.action == "place"
+    assert item.resolved_commit == "beef123"
+
+
+def test_plan_branch_head_blocked_when_unresolved():
+    inv = OnDiskInventory(repos={"a": _repo("a", Path("/off/a"), "offline")})
+    target = LayoutTarget(
+        targets={"a": LayoutTargetPresentBranchHead(branch="nope", location="a")}
+    )
+    (item,) = plan(target, inv, workspace_root=WS, resolved_refs={})
+    assert item.classification == "blocked"
+    assert "branch" in item.reason
+
+
+def test_plan_present_as_is_blocked_when_absent():
+    inv = OnDiskInventory()
+    target = LayoutTarget(targets={"a": LayoutTargetPresentAsIs(location="a")})
+    (item,) = plan(target, inv, workspace_root=WS)
+    assert item.classification == "blocked"
+    assert "absent" in item.reason
+
+
+def test_plan_pre_clear_retires_extras():
+    inv = OnDiskInventory(
+        repos={
+            "a": _repo("a", WS / "a", "materialized", commit="dead"),
+            "b": _repo("b", WS / "b", "materialized"),
+        }
+    )
+    target = LayoutTarget(
+        pre_clear=True,
+        targets={"a": LayoutTargetPresentCommit(commit="dead", location="a")},
+    )
+    by_slug = {i.slug: i for i in plan(target, inv, workspace_root=WS)}
+    assert by_slug["a"].classification == "satisfied"
+    assert by_slug["b"].action == "retire"
+
+
+# --------------------------------------------------------------------------- #
+# execute() dispatch — canned fake responses
+# --------------------------------------------------------------------------- #
+def _placed():
+    return {"status": "placed", "summary": "placed"}
+
+
+def test_execute_place_then_checkout_is_placed():
+    inv = OnDiskInventory(repos={"a": _repo("a", Path("/off/a"), "offline")})
+    target = LayoutTarget(targets={"a": LayoutTargetPresentCommit(commit="dead", location="a")})
+    fake = FakeBroker(
+        results={"place": _placed(), "checkout": {"status": "checked-out", "summary": "ok"}}
+    )
+    report = run(target, broker=fake, inventory=inv, workspace_root=WS)
+    assert report.outcomes[0].status == "placed"
+    assert [m for m, _ in fake.calls] == ["place", "checkout"]
+
+
+def test_execute_partial_when_checkout_fails_after_move():
+    inv = OnDiskInventory(repos={"a": _repo("a", Path("/off/a"), "offline")})
+    target = LayoutTarget(targets={"a": LayoutTargetPresentCommit(commit="deadbeef", location="a")})
+    fake = FakeBroker(
+        results={"place": _placed(), "checkout": {"status": "failed", "summary": "nope"}}
+    )
+    report = run(target, broker=fake, inventory=inv, workspace_root=WS)
+    outcome = report.outcomes[0]
+    assert outcome.status == "partial"
+    assert "placed" in outcome.summary and "checkout" in outcome.summary
+
+
+def test_execute_place_race_aborted_skips_checkout():
+    inv = OnDiskInventory(repos={"a": _repo("a", Path("/off/a"), "offline")})
+    target = LayoutTarget(targets={"a": LayoutTargetPresentCommit(commit="dead", location="a")})
+    fake = FakeBroker(results={"place": {"status": "race-aborted", "summary": "gone"}})
+    report = run(target, broker=fake, inventory=inv, workspace_root=WS)
+    assert report.outcomes[0].status == "race-aborted"
+    # checkout must NOT be attempted after a failed move
+    assert [m for m, _ in fake.calls] == ["place"]
+
+
+def test_execute_present_as_is_place_has_no_checkout():
+    inv = OnDiskInventory(repos={"a": _repo("a", Path("/off/a"), "offline")})
+    target = LayoutTarget(targets={"a": LayoutTargetPresentAsIs(location="a")})
+    fake = FakeBroker(results={"place": _placed()})
+    report = run(target, broker=fake, inventory=inv, workspace_root=WS)
+    assert report.outcomes[0].status == "placed"
+    assert [m for m, _ in fake.calls] == ["place"]  # no checkout
+
+
+def test_execute_unexpected_exception_propagates():
+    class _Boom(FakeBroker):
+        def call(self, method, params=None):
+            if method == "place":
+                raise ZeroDivisionError("simulated broker bug")
+            return super().call(method, params)
+
+    inv = OnDiskInventory(repos={"a": _repo("a", Path("/off/a"), "offline")})
+    target = LayoutTarget(targets={"a": LayoutTargetPresentAsIs(location="a")})
+    with pytest.raises(ZeroDivisionError):
+        execute(
+            plan(target, inv, workspace_root=WS), broker=_Boom(), workspace_root=WS
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Integration through the real-effect shim
+# --------------------------------------------------------------------------- #
 def _origin(path: Path) -> str:
     path.mkdir(parents=True, exist_ok=True)
-    run_git(["init", str(path)])
+    run_git(["init", "--initial-branch", "main", str(path)])
     (path / "README.md").write_text("hello\n")
     run_git(["add", "."], cwd=path)
     run_git(["commit", "-m", "initial"], cwd=path)
     return run_git(["rev-parse", "HEAD"], cwd=path)
 
 
-def _commit_more(path: Path, name: str) -> str:
-    (path / name).write_text(name + "\n")
-    run_git(["add", "."], cwd=path)
-    run_git(["commit", "-m", name], cwd=path)
-    return run_git(["rev-parse", "HEAD"], cwd=path)
+def _roots(tmp_path):
+    ws, off = tmp_path / "ws", tmp_path / "off"
+    ws.mkdir()
+    off.mkdir()
+    return ShimBroker(tmp_path / "config", ws, off), ws, off
 
 
-def _workspace_roots(tmp_path: Path) -> tuple[Path, Path]:
-    workspace = tmp_path / "ws"
-    offline = tmp_path / "off"
-    workspace.mkdir()
-    offline.mkdir()
-    return workspace, offline
-
-
-def test_place_offline_into_workspace(tmp_path):
+def test_integration_place_offline_into_workspace(tmp_path):
     head = _origin(tmp_path / "origin")
-    workspace, offline = _workspace_roots(tmp_path)
-    clone(tmp_path / "origin", offline / "alpha", profile=PROFILE, slug="alpha")
-
-    target = LayoutTarget(
-        targets={
-            "alpha": LayoutTargetPresentCommit(commit=head, location="alpha"),
-        }
-    )
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
-
-    assert report.ok
+    broker, ws, off = _roots(tmp_path)
+    clone(tmp_path / "origin", off / "alpha", profile=PROFILE, slug="alpha")
+    target = LayoutTarget(targets={"alpha": LayoutTargetPresentCommit(commit=head, location="alpha")})
+    report = run(target, broker=broker, inventory=scan(broker, ws, off), workspace_root=ws)
     assert report.outcomes[0].status == "placed"
-    assert (workspace / "alpha" / ".git").is_dir()
-    assert not (offline / "alpha").exists()
+    assert (ws / "alpha" / ".git").is_dir()
+    assert not (off / "alpha").exists()
 
 
-def test_satisfied_when_already_in_place(tmp_path):
-    head = _origin(tmp_path / "origin")
-    workspace, offline = _workspace_roots(tmp_path)
-    clone(tmp_path / "origin", workspace / "alpha", profile=PROFILE, slug="alpha")
-
-    target = LayoutTarget(
-        targets={
-            "alpha": LayoutTargetPresentCommit(commit=head, location="alpha"),
-        }
-    )
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
-    assert report.outcomes[0].status == "satisfied"
-
-
-def test_checkout_changes_ref_in_place(tmp_path):
-    origin = tmp_path / "origin"
-    first = _origin(origin)
-    second = _commit_more(origin, "second.txt")
-
-    workspace, offline = _workspace_roots(tmp_path)
-    repo = clone(origin, workspace / "alpha", profile=PROFILE, slug="alpha")
-    # Pull `second` into the local object DB so it's resolvable.
-    repo.fetch("origin")
-    # Reset so observed.commit is `first`.
-    run_git(["checkout", first], cwd=repo.path)
-
-    target = LayoutTarget(
-        targets={
-            "alpha": LayoutTargetPresentCommit(commit=second, location="alpha"),
-        }
-    )
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
-    assert report.outcomes[0].status == "checked-out"
-    assert repo.current_commit() == second
-
-
-def test_dirty_ref_change_is_blocked(tmp_path):
-    origin = tmp_path / "origin"
-    first = _origin(origin)
-    second = _commit_more(origin, "second.txt")
-
-    workspace, offline = _workspace_roots(tmp_path)
-    repo = clone(origin, workspace / "alpha", profile=PROFILE, slug="alpha")
-    repo.fetch("origin")
-    run_git(["checkout", first], cwd=repo.path)
-    (repo.path / "README.md").write_text("local edits\n")  # dirty
-
-    target = LayoutTarget(
-        targets={
-            "alpha": LayoutTargetPresentCommit(commit=second, location="alpha"),
-        }
-    )
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
-    assert report.outcomes[0].status == "blocked"
-    assert "dirty" in report.outcomes[0].summary
-
-
-def test_retire_via_absent(tmp_path):
-    head = _origin(tmp_path / "origin")
-    workspace, offline = _workspace_roots(tmp_path)
-    clone(tmp_path / "origin", workspace / "alpha", profile=PROFILE, slug="alpha")
-
+def test_integration_retire_via_absent(tmp_path):
+    _origin(tmp_path / "origin")
+    broker, ws, off = _roots(tmp_path)
+    clone(tmp_path / "origin", ws / "alpha", profile=PROFILE, slug="alpha")
     target = LayoutTarget(targets={"alpha": LayoutTargetAbsent()})
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
+    report = run(target, broker=broker, inventory=scan(broker, ws, off), workspace_root=ws)
     assert report.outcomes[0].status == "retired"
-    assert not (workspace / "alpha").exists()
-    assert (offline / "alpha" / ".git").is_dir()
-    del head  # not asserted on
+    assert not (ws / "alpha").exists()
+    assert (off / "alpha" / ".git").is_dir()
 
 
-def test_retire_blocked_when_offline_occupied(tmp_path):
+def test_integration_retire_blocked_when_offline_occupied(tmp_path):
     _origin(tmp_path / "origin")
-    workspace, offline = _workspace_roots(tmp_path)
-    clone(tmp_path / "origin", workspace / "alpha", profile=PROFILE, slug="alpha")
-    # Block the offline spot with a placeholder.
-    (offline / "alpha").mkdir()
-
+    broker, ws, off = _roots(tmp_path)
+    clone(tmp_path / "origin", ws / "alpha", profile=PROFILE, slug="alpha")
+    (off / "alpha").mkdir()  # occupy the offline spot
     target = LayoutTarget(targets={"alpha": LayoutTargetAbsent()})
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
+    report = run(target, broker=broker, inventory=scan(broker, ws, off), workspace_root=ws)
     assert report.outcomes[0].status == "blocked"
-    assert (workspace / "alpha" / ".git").is_dir()  # untouched
+    assert (ws / "alpha" / ".git").is_dir()  # untouched
 
 
-def test_relocate(tmp_path):
+def test_integration_relocate(tmp_path):
     head = _origin(tmp_path / "origin")
-    workspace, offline = _workspace_roots(tmp_path)
-    clone(tmp_path / "origin", workspace / "old", profile=PROFILE, slug="alpha")
-
-    target = LayoutTarget(
-        targets={
-            "alpha": LayoutTargetPresentCommit(commit=head, location="new"),
-        }
-    )
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
+    broker, ws, off = _roots(tmp_path)
+    clone(tmp_path / "origin", ws / "old", profile=PROFILE, slug="alpha")
+    target = LayoutTarget(targets={"alpha": LayoutTargetPresentCommit(commit=head, location="new")})
+    report = run(target, broker=broker, inventory=scan(broker, ws, off), workspace_root=ws)
     assert report.outcomes[0].status == "relocated"
-    assert not (workspace / "old").exists()
-    assert (workspace / "new" / ".git").is_dir()
-
-
-def test_branch_head_resolved_locally(tmp_path):
-    origin = tmp_path / "origin"
-    _origin(origin)
-    workspace, offline = _workspace_roots(tmp_path)
-    repo = clone(origin, offline / "alpha", profile=PROFILE, slug="alpha")
-    repo.fetch("origin")  # populate remote-tracking refs
-
-    # Advance origin and fetch so the source branch ref has a new HEAD locally.
-    new_head = _commit_more(origin, "second.txt")
-    repo.fetch("origin")
-
-    target = LayoutTarget(
-        targets={
-            "alpha": LayoutTargetPresentBranchHead(branch="master", location="alpha"),
-        }
-    )
-    # Try both default branch names since git's init default varies.
-    inv = scan(workspace, offline)
-    report = run(
-        target,
-        inventory=inv,
-        workspace_root=workspace,
-        offline_root=offline,
-    )
-    if report.outcomes[0].status == "blocked":
-        target = LayoutTarget(
-            targets={
-                "alpha": LayoutTargetPresentBranchHead(branch="main", location="alpha"),
-            }
-        )
-        report = run(
-            target,
-            inventory=inv,
-            workspace_root=workspace,
-            offline_root=offline,
-        )
-    assert report.outcomes[0].status == "placed"
-    from mono_control.git import GitRepo
-
-    assert GitRepo(workspace / "alpha").current_commit() == new_head
-
-
-def test_branch_head_blocked_when_not_local(tmp_path):
-    workspace, offline = _workspace_roots(tmp_path)
-    # Create an offline repo with no fetched refs.
-    from mono_control.git import init
-
-    init(offline / "alpha", profile=PROFILE, slug="alpha")
-    target = LayoutTarget(
-        targets={
-            "alpha": LayoutTargetPresentBranchHead(branch="nope", location="alpha"),
-        }
-    )
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
-    assert report.outcomes[0].status == "blocked"
-    assert "branch" in report.outcomes[0].summary
-
-
-def test_pre_clear_retires_extras(tmp_path):
-    head = _origin(tmp_path / "origin")
-    workspace, offline = _workspace_roots(tmp_path)
-    clone(tmp_path / "origin", workspace / "alpha", profile=PROFILE, slug="alpha")
-    clone(tmp_path / "origin", workspace / "beta", profile=PROFILE, slug="beta")
-
-    # Target keeps alpha, omits beta with pre_clear=True → beta gets retired.
-    target = LayoutTarget(
-        pre_clear=True,
-        targets={
-            "alpha": LayoutTargetPresentCommit(commit=head, location="alpha"),
-        },
-    )
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
-    by_slug = {o.slug: o for o in report.outcomes}
-    assert by_slug["alpha"].status == "satisfied"
-    assert by_slug["beta"].status == "retired"
-    assert (offline / "beta" / ".git").is_dir()
-
-
-def test_race_aborted_when_slug_stamp_changes_under_us(tmp_path):
-    """Re-stamping the offline checkout between plan and execute → race-aborted."""
-    head = _origin(tmp_path / "origin")
-    workspace, offline = _workspace_roots(tmp_path)
-    clone(tmp_path / "origin", offline / "alpha", profile=PROFILE, slug="alpha")
-
-    inv = scan(workspace, offline)
-    # Simulate a race: someone re-stamps the offline checkout with a different slug.
-    run_git(["config", "mono-control.slug", "intruder"], cwd=offline / "alpha")
-
-    target = LayoutTarget(
-        targets={
-            "alpha": LayoutTargetPresentCommit(commit=head, location="alpha"),
-        }
-    )
-    report = run(
-        target,
-        inventory=inv,  # pre-race observation
-        workspace_root=workspace,
-        offline_root=offline,
-    )
-    outcome = report.outcomes[0]
-    assert outcome.status == "race-aborted"
-    assert "intruder" in outcome.summary or "slug mismatch" in outcome.summary
-    # Repo untouched (still in offline; nothing moved).
-    assert (offline / "alpha" / ".git").is_dir()
-    assert not (workspace / "alpha").exists()
-
-
-def test_partial_when_checkout_fails_after_move(tmp_path, monkeypatch):
-    """A checkout error after a successful move → status=partial (not failed)."""
-    head = _origin(tmp_path / "origin")
-    workspace, offline = _workspace_roots(tmp_path)
-    clone(tmp_path / "origin", offline / "alpha", profile=PROFILE, slug="alpha")
-
-    target = LayoutTarget(
-        targets={
-            "alpha": LayoutTargetPresentCommit(commit=head, location="alpha"),
-        }
-    )
-    # Force the post-move checkout to raise. We monkey-patch GitRepo.checkout
-    # to fail unconditionally; the move has already succeeded by then.
-    from mono_control.git import GitError
-    from mono_control.git import repo as repo_module
-
-    real_checkout = repo_module.GitRepo.checkout
-
-    def _failing_checkout(self, ref):
-        raise GitError("simulated post-move checkout failure")
-
-    monkeypatch.setattr(repo_module.GitRepo, "checkout", _failing_checkout)
-    try:
-        report = run(
-            target,
-            inventory=scan(workspace, offline),
-            workspace_root=workspace,
-            offline_root=offline,
-        )
-    finally:
-        monkeypatch.setattr(repo_module.GitRepo, "checkout", real_checkout)
-
-    outcome = report.outcomes[0]
-    assert outcome.status == "partial"
-    assert "placed" in outcome.summary and "checkout" in outcome.summary
-    # The move did happen — the checkout is at the target location.
-    assert (workspace / "alpha" / ".git").is_dir()
-    assert not (offline / "alpha").exists()
-
-
-def test_unexpected_exception_propagates(tmp_path, monkeypatch):
-    """Unknown exceptions are not silently swallowed — they reach the UI layer."""
-    head = _origin(tmp_path / "origin")
-    workspace, offline = _workspace_roots(tmp_path)
-    clone(tmp_path / "origin", offline / "alpha", profile=PROFILE, slug="alpha")
-
-    target = LayoutTarget(
-        targets={
-            "alpha": LayoutTargetPresentCommit(commit=head, location="alpha"),
-        }
-    )
-    # Inject a bug into a helper the engine calls. The engine must NOT swallow
-    # it as `failed`; it must propagate.
-    from mono_control.engines.layout import execute as execute_module
-
-    real_move = execute_module._move
-
-    def _buggy_move(src, dst):
-        raise ZeroDivisionError("simulated engine bug")
-
-    monkeypatch.setattr(execute_module, "_move", _buggy_move)
-    try:
-        with pytest.raises(ZeroDivisionError):
-            run(
-                target,
-                inventory=scan(workspace, offline),
-                workspace_root=workspace,
-                offline_root=offline,
-            )
-    finally:
-        monkeypatch.setattr(execute_module, "_move", real_move)
-
-
-def test_present_as_is_places_without_checkout(tmp_path):
-    """moveto-style: place offline → location, HEAD unchanged."""
-    origin = tmp_path / "origin"
-    first = _origin(origin)
-    second = _commit_more(origin, "second.txt")
-
-    workspace, offline = _workspace_roots(tmp_path)
-    # Clone (HEAD = second), then move HEAD back to first so we can detect a
-    # checkout if one happens incorrectly.
-    repo = clone(origin, offline / "alpha", profile=PROFILE, slug="alpha")
-    run_git(["checkout", first], cwd=repo.path)
-
-    target = LayoutTarget(
-        targets={"alpha": LayoutTargetPresentAsIs(location="alpha")}
-    )
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
-
-    assert report.ok
-    assert report.outcomes[0].status == "placed"
-    placed = workspace / "alpha"
-    assert (placed / ".git").is_dir()
-    # HEAD is preserved (still at `first`); no checkout was performed.
-    from mono_control.git import GitRepo
-
-    assert GitRepo(placed).current_commit() == first
-    del second  # unused; only existed to advance HEAD via the clone
-
-
-def test_present_as_is_relocate_no_checkout(tmp_path):
-    """moveto-style: relocate without changing HEAD."""
-    origin = tmp_path / "origin"
-    first = _origin(origin)
-    workspace, offline = _workspace_roots(tmp_path)
-    clone(origin, workspace / "old", profile=PROFILE, slug="alpha")
-
-    target = LayoutTarget(
-        targets={"alpha": LayoutTargetPresentAsIs(location="new")}
-    )
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
-
-    assert report.outcomes[0].status == "relocated"
-    assert not (workspace / "old").exists()
-    assert (workspace / "new" / ".git").is_dir()
-    from mono_control.git import GitRepo
-
-    assert GitRepo(workspace / "new").current_commit() == first
-
-
-def test_present_as_is_satisfied_when_at_location(tmp_path):
-    """moveto-style: already at target location → no-op."""
-    _origin(tmp_path / "origin")
-    workspace, offline = _workspace_roots(tmp_path)
-    clone(tmp_path / "origin", workspace / "alpha", profile=PROFILE, slug="alpha")
-
-    target = LayoutTarget(
-        targets={"alpha": LayoutTargetPresentAsIs(location="alpha")}
-    )
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
-    assert report.outcomes[0].status == "satisfied"
-
-
-def test_present_as_is_blocked_when_absent(tmp_path):
-    """moveto-style: absent → blocked; source engine must acquire first."""
-    workspace, offline = _workspace_roots(tmp_path)
-    target = LayoutTarget(
-        targets={"alpha": LayoutTargetPresentAsIs(location="alpha")}
-    )
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
-    assert report.outcomes[0].status == "blocked"
-    assert "absent" in report.outcomes[0].summary
-
-
-def test_per_repo_independence_on_failure(tmp_path):
-    head = _origin(tmp_path / "origin")
-    workspace, offline = _workspace_roots(tmp_path)
-    clone(tmp_path / "origin", offline / "alpha", profile=PROFILE, slug="alpha")
-    clone(tmp_path / "origin", offline / "beta", profile=PROFILE, slug="beta")
-    # Pre-occupy beta's target location so its place will fail.
-    (workspace / "beta").mkdir()
-    (workspace / "beta" / "stale").write_text("blocker")
-
-    target = LayoutTarget(
-        targets={
-            "alpha": LayoutTargetPresentCommit(commit=head, location="alpha"),
-            "beta": LayoutTargetPresentCommit(commit=head, location="beta"),
-        }
-    )
-    report = run(
-        target,
-        inventory=scan(workspace, offline),
-        workspace_root=workspace,
-        offline_root=offline,
-    )
-    by_slug = {o.slug: o for o in report.outcomes}
-    assert by_slug["alpha"].status == "placed"
-    # beta's destination became occupied → reported as a race, not a generic failure.
-    assert by_slug["beta"].status == "race-aborted"
-    # alpha was placed successfully despite beta failing.
-    assert (workspace / "alpha" / ".git").is_dir()
+    assert not (ws / "old").exists()
+    assert (ws / "new" / ".git").is_dir()

@@ -1,5 +1,6 @@
 import pytest
 
+from broker_shim import ShimBroker
 from mono_control.config import (
     AmbiguousNameError,
     ConfigNotFoundError,
@@ -11,7 +12,8 @@ from mono_control.config import (
 
 @pytest.fixture
 def store(tmp_path) -> RepoStore:
-    return RepoStore(tmp_path / "repos")
+    broker = ShimBroker(tmp_path / "config", tmp_path / "ws", tmp_path / "off")
+    return RepoStore(broker)
 
 
 def test_slug_only_loads_by_slug(store):

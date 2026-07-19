@@ -1,7 +1,16 @@
+"""RepoStore against the broker's mono_config verbs (served by the shim).
+
+RepoStore keeps the container-side brain (validation, list filtering, the
+retire/restore mutations, conflict/not-found rules); the raw ``<slug>.json`` IO
+travels over the broker. The shim serves those verbs against a real config dir,
+so these tests exercise the full round-trip.
+"""
+
 import json
 
 import pytest
 
+from broker_shim import ShimBroker
 from mono_control.config import (
     ConfigConflictError,
     ConfigNotFoundError,
@@ -9,12 +18,12 @@ from mono_control.config import (
     Repo,
     RepoStore,
 )
-from mono_control.paths import REPOS_SUBDIR
 
 
 @pytest.fixture
 def store(tmp_path):
-    return RepoStore(tmp_path / "repos")
+    broker = ShimBroker(tmp_path / "config", tmp_path / "ws", tmp_path / "off")
+    return RepoStore(broker)
 
 
 def _repo(slug="demo", **kw):
@@ -47,10 +56,11 @@ def test_load_missing(store):
 
 def test_filename_slug_mismatch(store):
     store.create(_repo(slug="demo"))
-    # Rewrite the file's content to claim a different slug than its filename.
-    data = json.loads(store.path_for("demo").read_text())
+    # Rewrite the on-disk file to claim a different slug than its filename.
+    path = store.broker.repos_dir / "demo.json"
+    data = json.loads(path.read_text())
     data["slug"] = "other"
-    store.path_for("demo").write_text(json.dumps(data))
+    path.write_text(json.dumps(data))
     with pytest.raises(ConfigValidationError):
         store.load("demo")
 
@@ -78,10 +88,5 @@ def test_purge(store):
         store.purge("demo")
 
 
-def test_from_config_dir(tmp_path):
-    store = RepoStore.from_config_dir(tmp_path)
-    assert store.directory == tmp_path / REPOS_SUBDIR
-
-
-def test_list_empty_dir(store):
+def test_list_empty(store):
     assert store.list() == []

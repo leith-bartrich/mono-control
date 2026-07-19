@@ -319,10 +319,16 @@ def test_fake_serves_extra_canned_results():
 
 def test_emit_schema_has_expected_model_keys():
     schema = emit_schema()
-    assert set(schema) == {"WireRepo", "WireUnmanaged", "WireInventory"}
+    # The observation shapes plus a request/response pair per verb.
+    assert {"WireRepo", "WireUnmanaged", "WireInventory"} <= set(schema)
+    assert {"AcquireRequest", "AcquireResult", "LayoutOpRequest", "LayoutOpResult",
+            "CheckoutRequest", "ReadLayoutResult", "RepoDefsResult"} <= set(schema)
     props = schema["WireRepo"]["properties"]
     assert set(props) == {"slug", "location", "state", "commit", "dirty"}
     assert set(schema["WireUnmanaged"]["properties"]) == {"location", "state"}
+    assert set(schema["AcquireResult"]["properties"]) == {
+        "status", "summary", "unresolved_refs", "resolved"
+    }
 
 
 def test_emit_schema_is_deterministic():
@@ -343,4 +349,4 @@ def test_emit_schema_cli_prints_valid_json(tmp_path):
     result = runner.invoke(app, ["--config-dir", str(tmp_path), "emit-schema"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert set(payload) == {"WireRepo", "WireUnmanaged", "WireInventory"}
+    assert {"WireRepo", "WireUnmanaged", "WireInventory", "AcquireResult"} <= set(payload)
