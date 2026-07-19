@@ -17,10 +17,13 @@ from .models import (
     BrokerError,
     WireInventory,
     WireRepo,
+    WireUnmanaged,
     wire_inventory_from_on_disk,
     wire_inventory_to_on_disk,
     wire_repo_from_on_disk,
     wire_repo_to_on_disk,
+    wire_unmanaged_from_on_disk,
+    wire_unmanaged_to_on_disk,
 )
 from .schema import emit_schema
 
@@ -32,9 +35,12 @@ __all__ = [
     "FakeBroker",
     "WireInventory",
     "WireRepo",
+    "WireUnmanaged",
     "emit_schema",
     "wire_inventory_from_on_disk",
     "wire_inventory_to_on_disk",
     "wire_repo_from_on_disk",
     "wire_repo_to_on_disk",
+    "wire_unmanaged_from_on_disk",
+    "wire_unmanaged_to_on_disk",
 ]

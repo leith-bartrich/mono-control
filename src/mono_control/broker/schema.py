@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from .models import WireInventory, WireRepo
+from .models import WireInventory, WireRepo, WireUnmanaged
 
 # The models that make up the wire contract, keyed by the name they appear under.
-_WIRE_MODELS = (WireRepo, WireInventory)
+_WIRE_MODELS = (WireRepo, WireUnmanaged, WireInventory)
 
 
 def emit_schema() -> dict[str, Any]:

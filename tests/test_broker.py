@@ -21,6 +21,7 @@ from mono_control.broker import (
     BrokerProtocol,
     WireInventory,
     WireRepo,
+    WireUnmanaged,
     emit_schema,
     wire_inventory_from_on_disk,
     wire_inventory_to_on_disk,
@@ -80,7 +81,7 @@ class _BrokerHandler(BaseHTTPRequestHandler):
                                 "dirty": False,
                             }
                         ],
-                        "unmanaged": ["stranger"],
+                        "unmanaged": [{"location": "stranger", "state": "materialized"}],
                     },
                 },
             )
@@ -157,7 +158,9 @@ def test_scan_convenience_validates_into_wire_inventory(broker_server):
     assert isinstance(inventory, WireInventory)
     assert [r.slug for r in inventory.repos] == ["alpha"]
     assert inventory.repos[0].state == "materialized"
-    assert inventory.unmanaged == ["stranger"]
+    assert [(u.location, u.state) for u in inventory.unmanaged] == [
+        ("stranger", "materialized")
+    ]
 
 
 def test_jsonrpc_error_raises_broker_error(broker_server):
@@ -232,13 +235,17 @@ def test_wire_inventory_round_trip(tmp_path):
                 dirty=True,
             ),
         },
-        unmanaged=[workspace / "products" / "stranger"],
+        # One foreign tree under each root, to exercise the state discriminator.
+        unmanaged=[workspace / "products" / "stranger", offline / "orphan"],
     )
 
     wire = wire_inventory_from_on_disk(on_disk, workspace, offline)
     # Wire form carries relative, JSON-native locations.
     assert {r.location for r in wire.repos} == {"alpha", "beta"}
-    assert wire.unmanaged == ["products/stranger"]
+    assert {(u.location, u.state) for u in wire.unmanaged} == {
+        ("products/stranger", "materialized"),
+        ("orphan", "offline"),
+    }
 
     back = wire_inventory_to_on_disk(wire, workspace, offline)
     assert back == on_disk
@@ -246,7 +253,8 @@ def test_wire_inventory_round_trip(tmp_path):
     assert back.repos["alpha"].location == workspace / "alpha"
     assert back.repos["beta"].location == offline / "beta"
     assert back.repos["beta"].location.is_absolute()
-    assert back.unmanaged == [workspace / "products" / "stranger"]
+    # The offline foreign tree round-trips back to the offline root, not workspace.
+    assert back.unmanaged == [workspace / "products" / "stranger", offline / "orphan"]
 
 
 def test_wire_repo_json_native(tmp_path):
@@ -311,9 +319,10 @@ def test_fake_serves_extra_canned_results():
 
 def test_emit_schema_has_expected_model_keys():
     schema = emit_schema()
-    assert set(schema) == {"WireRepo", "WireInventory"}
+    assert set(schema) == {"WireRepo", "WireUnmanaged", "WireInventory"}
     props = schema["WireRepo"]["properties"]
     assert set(props) == {"slug", "location", "state", "commit", "dirty"}
+    assert set(schema["WireUnmanaged"]["properties"]) == {"location", "state"}
 
 
 def test_emit_schema_is_deterministic():
@@ -334,4 +343,4 @@ def test_emit_schema_cli_prints_valid_json(tmp_path):
     result = runner.invoke(app, ["--config-dir", str(tmp_path), "emit-schema"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert set(payload) == {"WireRepo", "WireInventory"}
+    assert set(payload) == {"WireRepo", "WireUnmanaged", "WireInventory"}
