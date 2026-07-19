@@ -10,11 +10,20 @@ from __future__ import annotations
 
 from typing import Any
 
+from .client import TypedBrokerMixin
 from .models import BrokerError, WireInventory
 
 
-class FakeBroker:
-    """A canned, socket-free ``BrokerProtocol`` implementation for tests."""
+class FakeBroker(TypedBrokerMixin):
+    """A canned, socket-free ``BrokerProtocol`` implementation for tests.
+
+    Records every ``call`` and answers from a canned ``results`` map (``scan``
+    defaults to the given ``inventory``); the typed verbs (``acquire`` / ``place``
+    / …) inherited from :class:`TypedBrokerMixin` resolve through the same map,
+    so a test can pin any verb's JSON response. Unregistered methods raise
+    ``BrokerError(-32601, …)`` (JSON-RPC method-not-found). For end-to-end flows
+    that need evolving state, tests use the stateful shim fake instead.
+    """
 
     def __init__(
         self,
@@ -32,10 +41,3 @@ class FakeBroker:
         if method not in self.results:
             raise BrokerError(-32601, f"method not found: {method!r}")
         return self.results[method]
-
-    def scan(self) -> WireInventory:
-        """Return the canned ``WireInventory`` (also records the call)."""
-        result = self.call("scan")
-        if isinstance(result, WireInventory):
-            return result
-        return WireInventory.model_validate(result)

@@ -18,7 +18,7 @@ repo's ``StrictModel`` and reject unknown keys — a wire-typo guard.
 from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Any, Literal
 
 from ..base_models import StrictModel
 from ..on_disk.models import OnDiskInventory, OnDiskRepo
@@ -169,3 +169,148 @@ def wire_inventory_to_on_disk(
         for u in wire.unmanaged
     ]
     return OnDiskInventory(repos=repos, unmanaged=unmanaged)
+
+
+# --------------------------------------------------------------------------- #
+# Verb request / response models
+#
+# One request + response pair per broker verb. ``status`` fields are plain
+# ``str`` on the wire (the container re-validates them into the typed
+# ``SourceStatus`` / ``LayoutStatus`` literals when it rehydrates the internal
+# ``*Outcome`` models) so this module stays a leaf that never imports the
+# engines. Requests exist so ``emit_schema`` publishes the full contract and the
+# typed client can author calls from a single source of truth.
+# --------------------------------------------------------------------------- #
+
+
+# --- git pack: acquire (source engine's effecting half) --------------------- #
+class AcquireRequest(StrictModel):
+    """Ask the broker to make ``refs`` locally resolvable for ``slug``.
+
+    The broker resolves the source URL from mono-config (never trusted from the
+    container), clones / inits / fetches as needed, verifies each requested ref,
+    and returns a ``SourceOutcome``-shaped result. ``initial_branch`` names the
+    branch a brand-new (source-less) repo is initialized on.
+    """
+
+    slug: str
+    refs: list[str] = []
+    initial_branch: str | None = None
+
+
+class AcquireResult(StrictModel):
+    """A ``SourceOutcome`` in JSON-native form (plus the ref→commit ``resolved`` map).
+
+    ``resolved`` gives ``plan()`` the concrete commit for a requested ref (e.g. a
+    ``PresentBranchHead`` target's ``refs/heads/<branch>``) as plain data, so the
+    plan stage needs no git read of its own.
+    """
+
+    status: str
+    summary: str
+    unresolved_refs: list[str] = []
+    resolved: dict[str, str] = {}
+
+
+# --- git pack: layout effects (place / relocate / retire / checkout) -------- #
+class LayoutOpRequest(StrictModel):
+    """Place / relocate / retire ``slug``. ``location`` is a path relative to the
+    workspace root (``None`` for retire, whose destination the broker derives from
+    the slug). The broker normalizes it *inside* the workspace root and re-runs the
+    race guards (slug re-verify, occupancy)."""
+
+    slug: str
+    location: str | None = None
+
+
+class CheckoutRequest(StrictModel):
+    """Check ``commit`` out at ``slug``'s current location (hex commit only)."""
+
+    slug: str
+    commit: str
+
+
+class LayoutOpResult(StrictModel):
+    """A ``LayoutOutcome`` in JSON-native form (shared by every layout verb)."""
+
+    status: str
+    summary: str
+
+
+# --- git pack: read/write a cluster's layout document ----------------------- #
+class ReadLayoutRequest(StrictModel):
+    """Read ``<cluster_slug>``'s ``product-cluster/default-layout.json``.
+
+    The document lives inside the (broker-side) managed checkout; the container
+    checks presence/materialization from a prior ``scan`` and asks only for the
+    file's contents here.
+    """
+
+    cluster_slug: str
+
+
+class ReadLayoutResult(StrictModel):
+    """The layout file's contents, or ``exists=False`` if it isn't authored yet."""
+
+    exists: bool
+    layout: dict[str, Any] | None = None
+
+
+class WriteLayoutRequest(StrictModel):
+    """Author ``<cluster_slug>``'s layout document with ``layout`` (a JSON dict).
+
+    Not in the original Step-2 verb table (which listed only ``read_layout``); a
+    write path is required because the ``layout add`` / ``remove`` / ``manage``
+    authoring commands mutate the file, which is now a broker-side FS effect.
+    """
+
+    cluster_slug: str
+    layout: dict[str, Any]
+
+
+# --- mono_config pack: repo definitions + system.json ----------------------- #
+class RepoDefsRequest(StrictModel):
+    """Read repo definition JSON. ``slugs=None`` returns every definition."""
+
+    slugs: list[str] | None = None
+
+
+class RepoDefsResult(StrictModel):
+    """Raw ``<slug>.json`` repo definitions keyed by slug.
+
+    The container-side ``RepoStore`` keeps ownership of pydantic validation,
+    list filtering, and the retire/restore mutations; this verb only serves the
+    raw JSON that a workspace mount used to provide.
+    """
+
+    repos: dict[str, Any] = {}
+
+
+class SystemResult(StrictModel):
+    """The raw ``system.json`` contents, or ``None`` when it does not exist."""
+
+    system: dict[str, Any] | None = None
+
+
+class SaveRepoDefRequest(StrictModel):
+    """Create or overwrite one repo definition (``repo`` is the raw ``<slug>.json``)."""
+
+    repo: dict[str, Any]
+
+
+class SaveSystemRequest(StrictModel):
+    """Create or overwrite ``system.json`` (``system`` is its raw contents)."""
+
+    system: dict[str, Any]
+
+
+class SlugRequest(StrictModel):
+    """A verb keyed only by ``slug`` (e.g. purge a repo definition)."""
+
+    slug: str
+
+
+class OkResult(StrictModel):
+    """A minimal acknowledgement for write verbs."""
+
+    ok: bool = True

@@ -10,10 +10,49 @@ from __future__ import annotations
 
 from typing import Any
 
-from .models import WireInventory, WireRepo, WireUnmanaged
+from .models import (
+    AcquireRequest,
+    AcquireResult,
+    CheckoutRequest,
+    LayoutOpRequest,
+    LayoutOpResult,
+    OkResult,
+    ReadLayoutRequest,
+    ReadLayoutResult,
+    RepoDefsRequest,
+    RepoDefsResult,
+    SaveRepoDefRequest,
+    SaveSystemRequest,
+    SlugRequest,
+    SystemResult,
+    WireInventory,
+    WireRepo,
+    WireUnmanaged,
+    WriteLayoutRequest,
+)
 
 # The models that make up the wire contract, keyed by the name they appear under.
-_WIRE_MODELS = (WireRepo, WireUnmanaged, WireInventory)
+# Observation shapes first, then one request/response pair per verb.
+_WIRE_MODELS = (
+    WireRepo,
+    WireUnmanaged,
+    WireInventory,
+    AcquireRequest,
+    AcquireResult,
+    LayoutOpRequest,
+    CheckoutRequest,
+    LayoutOpResult,
+    ReadLayoutRequest,
+    ReadLayoutResult,
+    WriteLayoutRequest,
+    RepoDefsRequest,
+    RepoDefsResult,
+    SystemResult,
+    SaveRepoDefRequest,
+    SaveSystemRequest,
+    SlugRequest,
+    OkResult,
+)
 
 
 def emit_schema() -> dict[str, Any]:

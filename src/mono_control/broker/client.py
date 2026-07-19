@@ -21,7 +21,18 @@ import urllib.error
 import urllib.request
 from typing import Any, Protocol, runtime_checkable
 
-from .models import BrokerError, WireInventory
+from .models import (
+    AcquireResult,
+    BrokerError,
+    CheckoutRequest,
+    LayoutOpRequest,
+    LayoutOpResult,
+    OkResult,
+    ReadLayoutResult,
+    RepoDefsResult,
+    SystemResult,
+    WireInventory,
+)
 
 HOST_ENV = "MONO_BROKER_HOST"
 PORT_ENV = "MONO_BROKER_PORT"
@@ -38,16 +49,131 @@ class BrokerTransportError(Exception):
     """
 
 
+class TypedBrokerMixin:
+    """Typed convenience verbs, authored once in terms of raw ``call``.
+
+    Every effect the container needs is a thin, typed wrapper over a single
+    JSON-RPC ``call`` — the transport chokepoint the concrete client/fake
+    provides. These validate the JSON result into the pydantic wire models; the
+    transport core itself (``BrokerClient.call``) stays stdlib-only, so this
+    convenience layer is the only place pydantic touches the wire.
+    """
+
+    def call(self, method: str, params: dict | None = None) -> Any:  # pragma: no cover
+        raise NotImplementedError
+
+    def scan(self) -> WireInventory:
+        """Observe both roots (``scan``) as a ``WireInventory``."""
+        result = self.call("scan")
+        # Preserve identity when a fake hands back an already-built model.
+        if isinstance(result, WireInventory):
+            return result
+        return WireInventory.model_validate(result)
+
+    def acquire(
+        self, slug: str, refs: list[str], *, initial_branch: str | None = None
+    ) -> AcquireResult:
+        """Make ``refs`` locally resolvable for ``slug`` (clone / init / fetch)."""
+        params: dict[str, Any] = {"slug": slug, "refs": refs}
+        if initial_branch is not None:
+            params["initial_branch"] = initial_branch
+        return AcquireResult.model_validate(self.call("acquire", params))
+
+    def place(self, slug: str, location: str) -> LayoutOpResult:
+        """Move ``slug`` offline → ``location`` under the workspace root."""
+        return self._layout_op("place", slug, location)
+
+    def relocate(self, slug: str, location: str) -> LayoutOpResult:
+        """Move ``slug`` between two materialized locations."""
+        return self._layout_op("relocate", slug, location)
+
+    def retire(self, slug: str, location: str | None = None) -> LayoutOpResult:
+        """Retire ``slug`` from the workspace back to the offline holding area."""
+        return self._layout_op("retire", slug, location)
+
+    def _layout_op(self, method: str, slug: str, location: str | None) -> LayoutOpResult:
+        params = LayoutOpRequest(slug=slug, location=location).model_dump()
+        return LayoutOpResult.model_validate(self.call(method, params))
+
+    def checkout(self, slug: str, commit: str) -> LayoutOpResult:
+        """Check ``commit`` out at ``slug``'s current location (hex only)."""
+        params = CheckoutRequest(slug=slug, commit=commit).model_dump()
+        return LayoutOpResult.model_validate(self.call("checkout", params))
+
+    def read_layout(self, cluster_slug: str) -> ReadLayoutResult:
+        """Read a cluster's ``product-cluster/default-layout.json`` contents."""
+        return ReadLayoutResult.model_validate(
+            self.call("read_layout", {"cluster_slug": cluster_slug})
+        )
+
+    def write_layout(self, cluster_slug: str, layout: dict[str, Any]) -> OkResult:
+        """Author a cluster's layout document."""
+        return OkResult.model_validate(
+            self.call("write_layout", {"cluster_slug": cluster_slug, "layout": layout})
+        )
+
+    def get_repo_defs(self, slugs: list[str] | None = None) -> RepoDefsResult:
+        """Read raw repo definition JSON (all, or the named ``slugs``)."""
+        params = {"slugs": slugs} if slugs is not None else {}
+        return RepoDefsResult.model_validate(self.call("get_repo_defs", params))
+
+    def get_system(self) -> SystemResult:
+        """Read the raw ``system.json`` contents (``None`` if absent)."""
+        return SystemResult.model_validate(self.call("get_system"))
+
+    def save_repo_def(self, repo: dict[str, Any]) -> OkResult:
+        """Create or overwrite one repo definition."""
+        return OkResult.model_validate(self.call("save_repo_def", {"repo": repo}))
+
+    def purge_repo_def(self, slug: str) -> OkResult:
+        """Hard-delete one repo definition (raises ``BrokerError`` if absent)."""
+        return OkResult.model_validate(self.call("purge_repo_def", {"slug": slug}))
+
+    def save_system(self, system: dict[str, Any]) -> OkResult:
+        """Create or overwrite ``system.json``."""
+        return OkResult.model_validate(self.call("save_system", {"system": system}))
+
+
 @runtime_checkable
 class BrokerProtocol(Protocol):
-    """The surface callers depend on — satisfied by ``BrokerClient`` and the fake."""
+    """The surface callers depend on — satisfied by ``BrokerClient`` and the fakes.
+
+    Callers depend on the typed verbs (``scan`` / ``acquire`` / ``place`` / …),
+    all of which route through the single ``call`` chokepoint.
+    """
 
     def call(self, method: str, params: dict | None = None) -> Any: ...
 
     def scan(self) -> WireInventory: ...
 
+    def acquire(
+        self, slug: str, refs: list[str], *, initial_branch: str | None = None
+    ) -> AcquireResult: ...
 
-class BrokerClient:
+    def place(self, slug: str, location: str) -> LayoutOpResult: ...
+
+    def relocate(self, slug: str, location: str) -> LayoutOpResult: ...
+
+    def retire(self, slug: str, location: str | None = None) -> LayoutOpResult: ...
+
+    def checkout(self, slug: str, commit: str) -> LayoutOpResult: ...
+
+    def read_layout(self, cluster_slug: str) -> ReadLayoutResult: ...
+
+    def write_layout(self, cluster_slug: str, layout: dict[str, Any]) -> OkResult: ...
+
+    def get_repo_defs(self, slugs: list[str] | None = None) -> RepoDefsResult: ...
+
+    def get_system(self) -> SystemResult: ...
+
+    def save_repo_def(self, repo: dict[str, Any]) -> OkResult: ...
+
+    def purge_repo_def(self, slug: str) -> OkResult: ...
+
+    def save_system(self, system: dict[str, Any]) -> OkResult: ...
+
+
+class BrokerClient(TypedBrokerMixin):
     """A JSON-RPC 2.0 client that POSTs to the host-side broker over HTTP.
 
     Reads ``MONO_BROKER_HOST`` / ``PORT`` / ``TOKEN`` from the environment; the
@@ -144,8 +270,3 @@ class BrokerClient:
                 f"broker response lacked both 'result' and 'error': {message!r}"
             )
         return message["result"]
-
-    def scan(self) -> WireInventory:
-        """Call the ``scan`` method and validate its result into ``WireInventory``."""
-        result = self.call("scan")
-        return WireInventory.model_validate(result)
