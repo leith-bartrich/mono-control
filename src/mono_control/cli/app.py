@@ -1,5 +1,6 @@
 """Command-line entrypoint for mono-control (Typer + Rich)."""
 
+import json
 import shlex
 from importlib.metadata import version
 from pathlib import Path
@@ -10,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from mono_control.aspects import attach_aspect_commands
+from mono_control.broker import emit_schema
 from mono_control.config import ConfigError, RepoStore, load_config
 from mono_control.host_platform import require_valid as require_valid_host_platform
 from mono_control.paths import CONFIG_DIR, OFFLINE_DIR, REPOS_DIR
@@ -98,6 +100,16 @@ def validate(ctx: typer.Context) -> None:
             console.print(f"[red]error[/red] repo {slug}: {e}")
         raise typer.Exit(code=1)
     console.print(f"[green]ok:[/green] config is valid ({len(slugs)} repo(s))")
+
+
+@app.command("emit-schema")
+def emit_schema_cmd() -> None:
+    """Print the broker wire-contract JSON Schema to stdout.
+
+    Pure and effect-free — no broker connection needed. This is what the shim's
+    future ``json-schema-control`` invokes to publish the contract.
+    """
+    typer.echo(json.dumps(emit_schema(), indent=2, sort_keys=True))
 
 
 @app.command("version")
