@@ -99,22 +99,31 @@ def _add_existing(store: RepoStore, name: str, slug: str) -> None:
             if fork_url:
                 sources["fork-ours"] = fork_url
 
-    dev = _prompt_dev_from_remote(url)
+    dev = _prompt_dev_from_remote(store, url)
     branches = {"dev": dev} if dev else {}
     store.create(Repo(version=1, slug=slug, name=name, sources=sources, branches=branches))
     console.print(f"[green]created[/green] {slug}")
 
 
-def _prompt_dev_from_remote(url: str) -> str | None:
-    """Ask for the `dev` branch (blank skips).
+def _prompt_dev_from_remote(store: RepoStore, url: str) -> str | None:
+    """Probe the remote's default branch and offer it for `dev`; else ask (blank skips).
 
-    The container holds no network git and never talks to the remote directly, so
-    it no longer probes the remote's default branch here — the broker resolves URLs
-    and refs when a repo is later acquired. The name is simply prompted for.
+    The probe is a git effect, so it runs broker-side (``remote_default_branch``);
+    the container just authors the URL and asks the broker to resolve its symbolic
+    HEAD. A broker/transport failure degrades to the plain prompt.
     """
-    del url  # the container cannot reach the remote; kept for signature stability
+    try:
+        default = store.broker.remote_default_branch(url)
+    except Exception:
+        console.print("[yellow](couldn't read the remote; specify the dev branch)[/yellow]")
+        default = None
+    if default and questionary.confirm(
+        f"The remote's default branch is {default!r} — use it as `dev`?", default=True
+    ).ask():
+        return default
     return (
-        questionary.text("dev branch name (blank to skip):").ask() or ""
+        questionary.text("dev branch name (blank to skip):", default=default or "").ask()
+        or ""
     ).strip() or None
 
 

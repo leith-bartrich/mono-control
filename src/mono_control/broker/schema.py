@@ -19,6 +19,8 @@ from .models import (
     OkResult,
     ReadLayoutRequest,
     ReadLayoutResult,
+    RemoteDefaultBranchRequest,
+    RemoteDefaultBranchResult,
     RepoDefsRequest,
     RepoDefsResult,
     SaveRepoDefRequest,
@@ -52,6 +54,8 @@ _WIRE_MODELS = (
     SaveSystemRequest,
     SlugRequest,
     OkResult,
+    RemoteDefaultBranchRequest,
+    RemoteDefaultBranchResult,
 )
 
 

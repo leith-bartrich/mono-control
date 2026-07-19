@@ -202,6 +202,10 @@ class ShimBroker(TypedBrokerMixin):
         self.repos_dir = self.config_dir / "repos"
         self.profile = profile
         self.calls: list[tuple[str, dict | None]] = []
+        # Canned answers for ``remote_default_branch`` — kept hermetic (no network
+        # probe). Per-URL overrides win; otherwise the fixed default is returned.
+        self.default_remote_branch: str | None = "main"
+        self.remote_default_branches: dict[str, str | None] = {}
 
     # -- dispatch ---------------------------------------------------------- #
     def call(self, method: str, params: dict | None = None) -> Any:
@@ -444,6 +448,12 @@ class ShimBroker(TypedBrokerMixin):
             json.dumps(params["system"], indent=2) + "\n"
         )
         return {"ok": True}
+
+    # -- remote probe (canned; no real network) ---------------------------- #
+    def _v_remote_default_branch(self, params: dict) -> dict:
+        url = params["url"]
+        branch = self.remote_default_branches.get(url, self.default_remote_branch)
+        return {"branch": branch}
 
 
 # --------------------------------------------------------------------------- #

@@ -314,3 +314,29 @@ class OkResult(StrictModel):
     """A minimal acknowledgement for write verbs."""
 
     ok: bool = True
+
+
+# --- git pack: probe a remote's default branch (guided repo-add) ------------ #
+class RemoteDefaultBranchRequest(StrictModel):
+    """Ask the broker for the default branch (symbolic ``HEAD``) of a remote.
+
+    Takes a raw ``url`` — not a slug — because guided repo-add probes a remote the
+    user is *defining*, so the repo def may not exist in mono-config yet. This is
+    the same trust boundary the ``save_repo_def`` write verbs already use: the
+    container authors remote URLs, so letting it probe one is consistent.
+
+    SHIM SECURITY (when the real handler is implemented, other repo): the URL is
+    attacker-influenced, so the broker MUST sanitize it, run ``git ls-remote
+    --symref <url> HEAD`` under ``GIT_ALLOW_PROTOCOL=https`` (no ``file://`` /
+    ``ext://`` / ssh side channels), and rely on the github.com-only credential
+    helper to scope the token to intended hosts. Never interpolate the URL into a
+    shell.
+    """
+
+    url: str
+
+
+class RemoteDefaultBranchResult(StrictModel):
+    """The remote's default branch (e.g. ``main``), or ``None`` if it has none."""
+
+    branch: str | None = None

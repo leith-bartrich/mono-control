@@ -322,7 +322,8 @@ def test_emit_schema_has_expected_model_keys():
     # The observation shapes plus a request/response pair per verb.
     assert {"WireRepo", "WireUnmanaged", "WireInventory"} <= set(schema)
     assert {"AcquireRequest", "AcquireResult", "LayoutOpRequest", "LayoutOpResult",
-            "CheckoutRequest", "ReadLayoutResult", "RepoDefsResult"} <= set(schema)
+            "CheckoutRequest", "ReadLayoutResult", "RepoDefsResult",
+            "RemoteDefaultBranchRequest", "RemoteDefaultBranchResult"} <= set(schema)
     props = schema["WireRepo"]["properties"]
     assert set(props) == {"slug", "location", "state", "commit", "dirty"}
     assert set(schema["WireUnmanaged"]["properties"]) == {"location", "state"}

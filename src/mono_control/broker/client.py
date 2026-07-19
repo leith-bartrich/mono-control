@@ -29,6 +29,7 @@ from .models import (
     LayoutOpResult,
     OkResult,
     ReadLayoutResult,
+    RemoteDefaultBranchResult,
     RepoDefsResult,
     SystemResult,
     WireInventory,
@@ -133,6 +134,17 @@ class TypedBrokerMixin:
         """Create or overwrite ``system.json``."""
         return OkResult.model_validate(self.call("save_system", {"system": system}))
 
+    def remote_default_branch(self, url: str) -> str | None:
+        """Probe a remote's default branch (its symbolic ``HEAD``), or ``None``.
+
+        Takes a raw URL because guided repo-add probes a remote the user is still
+        defining; mirrors the old in-container ``git ls-remote --symref`` helper.
+        """
+        result = RemoteDefaultBranchResult.model_validate(
+            self.call("remote_default_branch", {"url": url})
+        )
+        return result.branch
+
 
 @runtime_checkable
 class BrokerProtocol(Protocol):
@@ -171,6 +183,8 @@ class BrokerProtocol(Protocol):
     def purge_repo_def(self, slug: str) -> OkResult: ...
 
     def save_system(self, system: dict[str, Any]) -> OkResult: ...
+
+    def remote_default_branch(self, url: str) -> str | None: ...
 
 
 class BrokerClient(TypedBrokerMixin):
