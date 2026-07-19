@@ -10,15 +10,16 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from .errors import GitCommandError, GitError
+from .errors import GitAuthError, GitCommandError, GitError, is_auth_failure
 
 
 def run_git(args: list[str], *, cwd: Path | None = None) -> str:
     """Run ``git <args>`` and return its stripped stdout.
 
     ``cwd`` sets the working directory for the invocation. A non-zero exit raises
-    ``GitCommandError`` (with the command, code, and stderr); a missing git binary
-    raises ``GitError``.
+    ``GitCommandError`` — or its ``GitAuthError`` subclass when stderr shows the
+    failure was really a missing/rejected GitHub credential, since that remedy lies
+    outside the container. A missing git binary raises ``GitError``.
     """
     command = ["git", *args]
     try:
@@ -32,5 +33,6 @@ def run_git(args: list[str], *, cwd: Path | None = None) -> str:
     except FileNotFoundError as e:
         raise GitError("git executable not found on PATH") from e
     if result.returncode != 0:
-        raise GitCommandError(command, result.returncode, result.stderr)
+        error = GitAuthError if is_auth_failure(result.stderr) else GitCommandError
+        raise error(command, result.returncode, result.stderr)
     return result.stdout.strip()

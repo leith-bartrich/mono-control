@@ -34,3 +34,17 @@ services:
       # from an overriding host env / .env, falling back to `generic` (matching
       # the image's baked default). The shim's per-call `-e` still overrides this.
       MONO_CONTROL_HOST_PLATFORM: "${MONO_CONTROL_HOST_PLATFORM:-generic}"
+      # GitHub credential (see docs/design/github-auth.md). A SECRET, so unlike the
+      # sentinels above it has no baked default in the image — it is interpolated
+      # from the environment of whoever runs compose and is empty when absent.
+      #
+      # Headless: the shim resolves a token (scoped PAT, else `gh auth token`) and
+      # exports it into the environment it hands to `docker compose`, so it lands
+      # here without ever appearing in the host process's argv.
+      # VS Code "Reopen in Container" (which the shim is not part of): picked up
+      # from your own shell environment, if you export it there.
+      #
+      # Empty is not an error: public remotes need no credential, and the helper
+      # exits silently when the var is unset. Private remotes then fail loudly
+      # (GIT_TERMINAL_PROMPT=0) rather than prompting.
+      MONO_CONTROL_GITHUB_TOKEN: "${MONO_CONTROL_GITHUB_TOKEN:-}"

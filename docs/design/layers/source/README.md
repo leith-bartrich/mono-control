@@ -90,4 +90,8 @@ stamp done at transition time — is engine work, TBD.) Leaving every checkout *
 `dev`** hands the [layout engine](../layout/README.md) a clean, correctly-reffed checkout
 to simply *place* — placement-only. More opinionated ref work (advancing to a pinned
 commit, pulls) is a **later layer that runs after the layout engine**, not part of
-acquisition. Fetch policy and auth remain **TBD**.
+acquisition. Fetch policy remains **TBD**; auth is settled — see
+[GitHub authentication](../../github-auth.md). In short: the container is handed a
+token per invocation (`MONO_CONTROL_GITHUB_TOKEN`) which an env-only, github.com-scoped
+credential helper supplies to git, so acquisition can clone private remotes without the
+credential ever reaching a `.git/config`.

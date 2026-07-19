@@ -42,10 +42,57 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # it applies in the headless path too, which runs no VS Code lifecycle hooks.
 RUN git config --system --add safe.directory '*'
 
-# Put the user's tool bin on PATH for ALL processes — VS Code terminals and the
+# GitHub credential helper (see docs/design/github-auth.md).
+#
+# mono-control clones private repos over HTTPS, so git needs a credential. The
+# container cannot obtain one itself — the host's is in an OS keyring a Linux
+# container cannot reach — so the shim supplies MONO_CONTROL_GITHUB_TOKEN per
+# invocation and this helper hands it to git.
+#
+# It reads the token from the ENVIRONMENT and never persists it. That is the
+# whole point: the obvious shortcut (`url.insteadOf` with an embedded token)
+# would write the credential into every clone's .git/config — files that live on
+# the HOST via the bind mounts, where they would persist indefinitely.
+#
+# Registered ONLY for https://github.com. This is load-bearing, not decorative:
+# whatever URL ends up in a repo definition — a typo, a bad PR into mono-config,
+# a compromised upstream — git will never hand the token to another host.
+#
+# Written inline rather than COPYed because .dockerignore excludes .devcontainer/.
+RUN printf '%s\n' \
+        '#!/bin/sh' \
+        '# git credential helper for mono-control. Supplies MONO_CONTROL_GITHUB_TOKEN,' \
+        '# read from the environment so it is never written to any .git/config.' \
+        '# Registered for https://github.com only (see git config --system, below).' \
+        '[ "$1" = "get" ] || exit 0' \
+        '[ -n "$MONO_CONTROL_GITHUB_TOKEN" ] || exit 0' \
+        'echo "username=x-access-token"' \
+        'echo "password=$MONO_CONTROL_GITHUB_TOKEN"' \
+        > /usr/local/bin/git-credential-mono \
+    && chmod 0755 /usr/local/bin/git-credential-mono \
+    && git config --system credential."https://github.com".helper mono
+
+# Never let git block on an interactive prompt. Without a usable credential the
+# old behavior was to prompt on the container's TTY — which is how a missing token
+# presented as a mysterious "Username for 'https://github.com':" rather than an
+# error. Fail loudly instead; mono-control maps the result to a typed GitAuthError.
+#
+# Baked as a persistent ENV: like MONO_CONTROL_HOST_PLATFORM=generic, this is an
+# operational default with no security meaning. The TOKEN itself is a secret and is
+# deliberately baked as neither ENV nor ARG — it arrives only at run time.
+ENV GIT_TERMINAL_PROMPT=0
+
+# Where the baked mono-control environment lives. DELIBERATELY outside
+# /workspaces/mono-control: dev mode bind-mounts live source over that path, which
+# would shadow an in-tree .venv and leave the tool unrunnable. (The shim already
+# relies on this same trick for `mproj test-control`.)
+ENV MONO_CONTROL_VENV="/home/${USERNAME}/.mono-control-venv"
+
+# Put that venv's bin on PATH for ALL processes — VS Code terminals and the
 # headless shim path alike — so the baked `mono-control` console script resolves
 # without relying on devcontainer.json's remoteEnv (which the headless path skips).
-ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
+# ~/.local/bin stays on PATH for any other user-installed tooling.
+ENV PATH="${MONO_CONTROL_VENV}/bin:/home/${USERNAME}/.local/bin:${PATH}"
 
 # Safe default for the host-platform sentinel (see docs/design/host-platform.md).
 # DELIBERATELY baked as a persistent ENV — unlike MONO_CONTROL_IN_CONTAINER, which
@@ -60,11 +107,23 @@ USER ${USERNAME}
 # Bake mono-control into the image so the headless path (which runs no lifecycle
 # hooks) has the tool ready with no source mount. The code lives at its canonical
 # workspace path; in dev the overlay bind-mounts live source over this, shadowing
-# the baked copy. Editable so that one path is the source of truth in both modes.
+# the baked copy. `uv sync` installs the project EDITABLE, so in dev mode it is
+# that mount which actually executes — one source of truth in both modes.
+#
+# `--locked` is the whole point of this step: it installs exactly the versions
+# pinned in uv.lock and VERIFIES each artifact's hash, failing the build if the
+# lock is stale or a downloaded artifact does not match. This is why the
+# environment is built with `uv sync` and not `uv tool install` — the latter
+# resolves dependencies fresh and ignores hashes even when handed a hashed
+# constraints file, so every rebuild would be an unpinned resolve. `--no-dev`
+# keeps pytest and friends out of the shipped artifact.
 #
 # The sentinel is set inline for THIS build step only — the build gate
 # (_build/gate.py) requires it, and image build is the sanctioned container
 # context. It is deliberately not baked as a persistent ENV; the run-time gate
 # relies on the sentinel set on the service in docker-compose.yml.
 COPY --chown=${USERNAME}:${USERNAME} . /workspaces/mono-control
-RUN MONO_CONTROL_IN_CONTAINER=1 uv tool install --editable /workspaces/mono-control
+RUN cd /workspaces/mono-control \
+    && MONO_CONTROL_IN_CONTAINER=1 \
+       UV_PROJECT_ENVIRONMENT="${MONO_CONTROL_VENV}" \
+       uv sync --locked --no-dev

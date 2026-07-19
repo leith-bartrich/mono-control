@@ -16,17 +16,22 @@
   "remoteUser": "codespace",
 
   // Dev-only provisioning (the headless path does not run lifecycle hooks). The
-  // image already provides git, uv, and the git safe.directory config, so this
-  // only needs to:
+  // image already provides git, uv, the git safe.directory config, AND a baked
+  // mono-control environment on PATH (see the Dockerfile) — so this only needs to:
   //   1. chown the freshly-created .claude named volume (mounts root-owned) to
   //      codespace, so Claude Code can write to it — idempotent once owned;
-  //   2. `uv sync` — create the project .venv (editable install + dev deps such
-  //      as pytest) that VS Code activates in terminals;
-  //   3. `uv tool install` — also expose `mono-control` as a standalone command
-  //      on PATH (~/.local/bin), independent of venv activation.
-  // Both uv steps build the package and therefore rely on the
+  //   2. `uv sync --locked` — create the project .venv (editable install + dev
+  //      deps such as pytest) that VS Code activates in terminals and points its
+  //      interpreter at. `--locked` installs exactly the pinned, hash-verified
+  //      versions in uv.lock and fails if the lock is stale, rather than silently
+  //      re-resolving.
+  // There is deliberately no `uv tool install` step: the image's baked venv already
+  // exposes `mono-control` on PATH via an EDITABLE install pointing at
+  // /workspaces/mono-control — which in dev mode is the live bind mount — so a
+  // second install would be both redundant and an unpinned resolve.
+  // This step builds the package and therefore relies on the
   // MONO_CONTROL_IN_CONTAINER sentinel set on the service in docker-compose.yml.
-  "postCreateCommand": "sudo chown -R codespace:codespace $HOME/.claude && uv sync && uv tool install --force --editable .",
+  "postCreateCommand": "sudo chown -R codespace:codespace $HOME/.claude && uv sync --locked",
 
   "customizations": {
     "vscode": {
