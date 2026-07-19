@@ -9,7 +9,7 @@ import questionary
 from rich.console import Console
 
 from mono_control import paths, repo_ops
-from mono_control.config import ConfigError, Repo, RepoStore, make_slug
+from mono_control.config import ConfigError, Repo, RepoStore, make_slug, source_names
 from mono_control.git import GitError, remote_default_branch
 from mono_control.host_platform import profile as host_profile
 
@@ -132,14 +132,22 @@ def _manage_one(store: RepoStore, slug: str) -> None:
         flag = " [red](retired)[/red]" if repo.retired else ""
         console.print(f"[bold]{repo.slug}[/bold] — {repo.name}{flag}")
         toggle = "restore" if repo.retired else "retire"
-        action = questionary.select(
-            "Action",
-            choices=["view", "rename", "sources", "branches", toggle, "purge", _BACK],
-        ).ask()
+        choices = ["view", "rename", "sources", "branches"]
+        # The governed upstream→fork transition — offered only where it applies
+        # (an upstream-based repo with no fork yet). The scriptable `repo fork
+        # add` gates only on the exact key, for power users adding more forks.
+        if source_names.UPSTREAM in repo.sources and not source_names.has_fork(
+            repo.sources
+        ):
+            choices.append("add fork")
+        choices += [toggle, "purge", _BACK]
+        action = questionary.select("Action", choices=choices).ask()
         if action in (None, _BACK):
             return
         if action == "view":
             _view(repo)
+        elif action == "add fork":
+            _add_fork(store, repo)
         elif action == "rename":
             name = (questionary.text("new name:", default=repo.name).ask() or "").strip()
             if name:
@@ -156,6 +164,92 @@ def _manage_one(store: RepoStore, slug: str) -> None:
                 store.purge(slug)
                 console.print(f"[red]purged[/red] {slug}")
                 return
+
+
+def _add_fork(store: RepoStore, repo: Repo) -> None:
+    """Guided upstream→fork transition — thin shell over :func:`repo_ops.adopt_fork`.
+
+    Asks whose fork it is, the URL, and (ours only) whether the fork's dev
+    line differs — probing the fork's default branch like ``_add_existing``.
+    """
+    whose = questionary.select(
+        "Whose fork is this?",
+        choices=["ours", "someone else's (tracked reference)"],
+    ).ask()
+    if whose is None:
+        return
+    purpose = "ours"
+    if whose != "ours":
+        purpose = (
+            questionary.text("purpose name (e.g. their handle):").ask() or ""
+        ).strip()
+        if not purpose:
+            return
+    url = (questionary.text("fork URL:").ask() or "").strip()
+    if not url:
+        return
+    dev_branch = _prompt_fork_dev(repo, url) if purpose == "ours" else None
+    try:
+        result = repo_ops.adopt_fork(
+            repo.slug,
+            url,
+            purpose=purpose,
+            dev_branch=dev_branch,
+            repo_store=store,
+            workspace_root=paths.REPOS_DIR,
+            offline_root=paths.OFFLINE_DIR,
+        )
+    except (ConfigError, ValueError, RuntimeError) as e:
+        console.print(f"[red]error:[/red] {e}")
+        return
+    console.print(f"[green]set[/green] source {result.source_key}")
+    if result.dev_repointed:
+        old = (
+            f" (old dev {result.old_dev!r} kept as dev-upstream)"
+            if result.old_dev is not None
+            else ""
+        )
+        console.print(f"[green]repointed[/green] dev -> {result.new_dev}{old}")
+    if result.remote_stamped:
+        console.print(
+            f"[green]stamped[/green] remote {result.source_key} in {result.checkout}"
+        )
+    elif result.remote_error is not None:
+        console.print(
+            "[yellow]warning:[/yellow] config saved, but remote stamp failed: "
+            f"{result.remote_error}"
+        )
+    else:
+        console.print(
+            "no on-disk checkout — config only (engines will conform the remote later)"
+        )
+
+
+def _prompt_fork_dev(repo: Repo, url: str) -> str | None:
+    """Probe the fork's default branch and offer a dev repoint; ``None`` keeps dev."""
+    current = repo.branches.get(source_names.DEV)
+    try:
+        default = remote_default_branch(url)
+    except GitError:
+        console.print("[yellow](couldn't read the fork; specify its dev branch)[/yellow]")
+        default = None
+    if default is not None:
+        if default == current:
+            return None  # same line — nothing to repoint
+        tracked = (
+            f"but tracked dev is {current!r}" if current is not None else "and no dev is tracked yet"
+        )
+        if questionary.confirm(
+            f"The fork's default branch is {default!r} {tracked} — repoint dev to "
+            "the fork's line (old line kept as 'dev-upstream')?",
+            default=True,
+        ).ask():
+            return default
+        return None
+    branch = (
+        questionary.text("fork's dev branch (blank = keep current dev):").ask() or ""
+    ).strip()
+    return branch or None
 
 
 def _view(repo: Repo) -> None:
