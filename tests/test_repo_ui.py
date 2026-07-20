@@ -29,12 +29,14 @@ def _store(tmp_path, *, default_branch="main"):
 
 
 def test_client_remote_default_branch_returns_branch_field(tmp_path):
+    # https URLs only: the shim's _sanitize_remote_url mirrors the real host-side
+    # broker, which refuses non-https / transport-helper URLs (see test_broker.py).
     broker = ShimBroker(tmp_path / "c", tmp_path / "w", tmp_path / "o")
-    assert broker.remote_default_branch("git@example.com:x.git") == "main"
-    broker.remote_default_branches["git@h:special.git"] = "trunk"
-    assert broker.remote_default_branch("git@h:special.git") == "trunk"
+    assert broker.remote_default_branch("https://example.com/x.git") == "main"
+    broker.remote_default_branches["https://h/special.git"] = "trunk"
+    assert broker.remote_default_branch("https://h/special.git") == "trunk"
     broker.default_remote_branch = None
-    assert broker.remote_default_branch("git@example.com:y.git") is None
+    assert broker.remote_default_branch("https://example.com/y.git") is None
 
 
 def test_fake_serves_remote_default_branch_from_canned_results():
@@ -52,7 +54,7 @@ def test_prompt_dev_probes_and_offers_default(tmp_path, monkeypatch):
         return _Ans(True)
 
     monkeypatch.setattr(repo_ui.questionary, "confirm", _confirm)
-    result = repo_ui._prompt_dev_from_remote(store, "git@example.com:x.git")
+    result = repo_ui._prompt_dev_from_remote(store, "https://example.com/x.git")
     assert result == "trunk"
     assert "trunk" in confirmed["msg"]  # the suggestion was surfaced
 
@@ -68,7 +70,7 @@ def test_prompt_dev_declined_falls_back_to_prompt(tmp_path, monkeypatch):
 
     monkeypatch.setattr(repo_ui.questionary, "confirm", lambda *a, **k: _Ans(False))
     monkeypatch.setattr(repo_ui.questionary, "text", _text)
-    result = repo_ui._prompt_dev_from_remote(store, "git@example.com:x.git")
+    result = repo_ui._prompt_dev_from_remote(store, "https://example.com/x.git")
     assert result == "hand-typed"
     # the probed branch pre-fills the manual prompt (matches pre-refactor UX)
     assert seen_default["default"] == "trunk"
@@ -83,7 +85,7 @@ def test_prompt_dev_none_falls_back_to_plain_prompt(tmp_path, monkeypatch):
 
     monkeypatch.setattr(repo_ui.questionary, "confirm", _confirm)
     monkeypatch.setattr(repo_ui.questionary, "text", lambda *a, **k: _Ans("main"))
-    assert repo_ui._prompt_dev_from_remote(store, "git@example.com:x.git") == "main"
+    assert repo_ui._prompt_dev_from_remote(store, "https://example.com/x.git") == "main"
 
 
 def test_prompt_dev_broker_failure_degrades_to_prompt(tmp_path, monkeypatch):
@@ -97,4 +99,4 @@ def test_prompt_dev_broker_failure_degrades_to_prompt(tmp_path, monkeypatch):
 
     store = RepoStore(_Boom())
     monkeypatch.setattr(repo_ui.questionary, "text", lambda *a, **k: _Ans("fallback"))
-    assert repo_ui._prompt_dev_from_remote(store, "git@example.com:x.git") == "fallback"
+    assert repo_ui._prompt_dev_from_remote(store, "https://example.com/x.git") == "fallback"

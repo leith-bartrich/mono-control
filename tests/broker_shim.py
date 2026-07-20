@@ -18,10 +18,12 @@ from __future__ import annotations
 import errno
 import json
 import os
+import re
 import shutil
 import subprocess
+import urllib.parse
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable, Iterator
 
 from mono_control.broker import (
@@ -198,6 +200,79 @@ def _move(src: Path, dst: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Input validation (the security boundary)
+#
+# The real host-side shim (mono-control-shim/.../verbs/git.py) validates every
+# container-supplied parameter at the boundary before it touches disk or spawns
+# git, rejecting hostile input with ``VerbError(INVALID_PARAMS, ...)``. This fake
+# mirrors those rejections exactly — same predicates, same JSON-RPC code (which
+# surfaces to the container as ``BrokerError(INVALID_PARAMS, ...)``) — so the
+# container's suite exercises the security boundary it otherwise couldn't reach.
+# Keep these in lockstep with the real ``_valid_slug`` / ``_valid_hex_commit`` /
+# ``_sanitize_remote_url`` / ``_resolve_inside``.
+# --------------------------------------------------------------------------- #
+INVALID_PARAMS = -32602  # JSON-RPC code the real shim raises for rejected input.
+
+_SLUG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_HEX_RE = re.compile(r"[0-9a-fA-F]{4,64}")
+_ALLOWED_URL_SCHEMES = frozenset({"https"})
+
+
+def _valid_slug(slug: Any) -> str:
+    """A slug must be a bare name (no separators, no ``..``, no leading dot)."""
+    if not isinstance(slug, str) or not _SLUG_RE.fullmatch(slug):
+        raise BrokerError(INVALID_PARAMS, f"invalid slug: {slug!r}")
+    return slug
+
+
+def _valid_hex_commit(commit: Any) -> str:
+    """A commit must be a bare hex object id — never a ref, ``HEAD``, or a flag."""
+    if not isinstance(commit, str) or not _HEX_RE.fullmatch(commit):
+        raise BrokerError(INVALID_PARAMS, f"commit must be a hex object id: {commit!r}")
+    return commit
+
+
+def _sanitize_remote_url(url: Any) -> str:
+    """A remote URL must be https and must not use a ``transport::`` helper."""
+    if not isinstance(url, str) or not url:
+        raise BrokerError(INVALID_PARAMS, f"invalid url: {url!r}")
+    if "::" in url:
+        raise BrokerError(INVALID_PARAMS, "url uses a transport helper (refused)")
+    scheme = urllib.parse.urlsplit(url).scheme.lower()
+    if scheme not in _ALLOWED_URL_SCHEMES:
+        raise BrokerError(
+            INVALID_PARAMS, f"url scheme {scheme or '(none)'!r} not allowed (https only)"
+        )
+    return url
+
+
+def _resolve_inside(root: Path, location: Any) -> Path:
+    """Resolve ``location`` to a path inside ``root`` or reject it.
+
+    Rejects absolutes (POSIX or Windows) and any ``..`` component, then guards
+    against a symlinked parent redirecting the destination out of ``root``.
+    """
+    if not isinstance(location, str) or not location:
+        raise BrokerError(INVALID_PARAMS, f"invalid location: {location!r}")
+    pure = PurePosixPath(location)
+    if (
+        pure.is_absolute()
+        or PureWindowsPath(location).is_absolute()
+        or any(part == ".." for part in pure.parts)
+    ):
+        raise BrokerError(INVALID_PARAMS, f"location escapes the workspace: {location!r}")
+    dst = root.joinpath(*pure.parts)
+    root_real = root.resolve()
+    ancestor = dst
+    while not ancestor.exists():
+        ancestor = ancestor.parent
+    ancestor_real = ancestor.resolve()
+    if ancestor_real != root_real and root_real not in ancestor_real.parents:
+        raise BrokerError(INVALID_PARAMS, f"location escapes the workspace: {location!r}")
+    return dst
+
+
+# --------------------------------------------------------------------------- #
 # The broker itself
 # --------------------------------------------------------------------------- #
 class ShimBroker(TypedBrokerMixin):
@@ -286,7 +361,7 @@ class ShimBroker(TypedBrokerMixin):
         return commit
 
     def _v_acquire(self, params: dict) -> dict:
-        slug = params["slug"]
+        slug = _valid_slug(params.get("slug"))
         refs = list(params.get("refs") or [])
         initial_branch = params.get("initial_branch")
         if not self._repo_def_path(slug).is_file():
@@ -356,12 +431,14 @@ class ShimBroker(TypedBrokerMixin):
         return self._move_into_workspace(params, "relocated", "relocate")
 
     def _move_into_workspace(self, params: dict, ok_status: str, verb: str) -> dict:
-        slug = params["slug"]
+        # Validate at the boundary (slug shape + location containment) before any
+        # disk read, mirroring the real shim.
+        slug = _valid_slug(params.get("slug"))
+        dst = _resolve_inside(self.workspace_root, params.get("location"))
         location = params["location"]
         observed = self._location_of(slug)
         if observed is None:
             return _race(slug, verb, "checkout vanished")
-        dst = self.workspace_root / location
         try:
             _move(observed.location, dst)
         except FileExistsError:
@@ -371,7 +448,7 @@ class ShimBroker(TypedBrokerMixin):
         return _lay(slug, ok_status, f"{verb}d {slug!r} at {location}")
 
     def _v_retire(self, params: dict) -> dict:
-        slug = params["slug"]
+        slug = _valid_slug(params.get("slug"))
         observed = self._location_of(slug)
         if observed is None:
             return _race(slug, "retire", "checkout vanished")
@@ -387,8 +464,8 @@ class ShimBroker(TypedBrokerMixin):
         return _lay(slug, "retired", f"retired {slug!r} to offline")
 
     def _v_checkout(self, params: dict) -> dict:
-        slug = params["slug"]
-        commit = params["commit"]
+        slug = _valid_slug(params.get("slug"))
+        commit = _valid_hex_commit(params.get("commit"))
         observed = self._location_of(slug)
         if observed is None:
             return _race(slug, "checkout", "checkout vanished")
@@ -409,15 +486,16 @@ class ShimBroker(TypedBrokerMixin):
         return observed.location / "product-cluster" / "default-layout.json"
 
     def _v_read_layout(self, params: dict) -> dict:
-        path = self._layout_path(params["cluster_slug"])
+        path = self._layout_path(_valid_slug(params.get("cluster_slug")))
         if path is None or not path.is_file():
             return {"exists": False, "layout": None}
         return {"exists": True, "layout": json.loads(path.read_text())}
 
     def _v_write_layout(self, params: dict) -> dict:
-        path = self._layout_path(params["cluster_slug"])
+        cluster_slug = _valid_slug(params.get("cluster_slug"))
+        path = self._layout_path(cluster_slug)
         if path is None:
-            raise BrokerError(-32000, f"{params['cluster_slug']!r} is not on disk")
+            raise BrokerError(-32000, f"{cluster_slug!r} is not on disk")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(params["layout"], indent=2) + "\n")
         return {"ok": True}
@@ -437,18 +515,18 @@ class ShimBroker(TypedBrokerMixin):
 
     def _v_save_repo_def(self, params: dict) -> dict:
         repo = params["repo"]
+        slug = _valid_slug(repo.get("slug"))
         self.repos_dir.mkdir(parents=True, exist_ok=True)
-        (self.repos_dir / f"{repo['slug']}.json").write_text(
-            json.dumps(repo, indent=2) + "\n"
-        )
+        (self.repos_dir / f"{slug}.json").write_text(json.dumps(repo, indent=2) + "\n")
         return {"ok": True}
 
     def _v_purge_repo_def(self, params: dict) -> dict:
-        path = self._repo_def_path(params["slug"])
+        slug = _valid_slug(params.get("slug"))
+        path = self._repo_def_path(slug)
         try:
             path.unlink()
         except FileNotFoundError as e:
-            raise BrokerError(-32000, f"repo {params['slug']!r} not found") from e
+            raise BrokerError(-32000, f"repo {slug!r} not found") from e
         return {"ok": True}
 
     def _v_get_system(self, params: dict) -> dict:
@@ -466,7 +544,7 @@ class ShimBroker(TypedBrokerMixin):
 
     # -- remote probe (canned; no real network) ---------------------------- #
     def _v_remote_default_branch(self, params: dict) -> dict:
-        url = params["url"]
+        url = _sanitize_remote_url(params.get("url"))
         branch = self.remote_default_branches.get(url, self.default_remote_branch)
         return {"branch": branch}
 
