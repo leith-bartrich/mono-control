@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from broker_shim import GitRepo, ShimBroker, clone, init, run_git, PROFILE
+from broker_shim import ShimBroker, clone, run_git, PROFILE
 from mono_control.broker import FakeBroker
 from mono_control.engines.layout import plan, run
 from mono_control.engines.layout.execute import execute

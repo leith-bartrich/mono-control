@@ -7,7 +7,7 @@ construction, the acquire calls made) run against canned fake responses.
 
 from pathlib import Path
 
-from broker_shim import GitRepo, ShimBroker, run_git, PROFILE
+from broker_shim import GitRepo, ShimBroker, run_git
 from mono_control.broker import FakeBroker
 from mono_control.config import Repo, RepoStore
 from mono_control.engines.source import SourceRequest, from_layout_target, run
