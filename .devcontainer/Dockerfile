@@ -42,6 +42,14 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # it applies in the headless path too, which runs no VS Code lifecycle hooks.
 RUN git config --system --add safe.directory '*'
 
+# The sandbox marker — THE security gate for both the build backend (_build/gate.py)
+# and the run-time CLI/test gates (mono_control.sandbox). Baked at a system path
+# OUTSIDE the source tree, so a host checkout never carries it and no environment
+# variable can fake it (the old MONO_CONTROL_IN_CONTAINER env sentinel was a one-line
+# bypass). Created here as root, before the USER switch, so it exists for the
+# editable install below (whose build backend checks it).
+RUN printf 'mono-control dev container\n' > /etc/mono-control-container
+
 # Put the user's tool bin on PATH for ALL processes — VS Code terminals and the
 # headless shim path alike — so the baked `mono-control` console script resolves
 # without relying on devcontainer.json's remoteEnv (which the headless path skips).
@@ -62,9 +70,9 @@ USER ${USERNAME}
 # workspace path; in dev the overlay bind-mounts live source over this, shadowing
 # the baked copy. Editable so that one path is the source of truth in both modes.
 #
-# The sentinel is set inline for THIS build step only — the build gate
-# (_build/gate.py) requires it, and image build is the sanctioned container
-# context. It is deliberately not baked as a persistent ENV; the run-time gate
-# relies on the sentinel set on the service in docker-compose.yml.
+# The build backend (_build/gate.py) requires the sandbox marker created above;
+# image build is the sanctioned container context, and the marker is present by
+# now, so the editable install proceeds. On the host the marker is absent, so the
+# same build fails fast.
 COPY --chown=${USERNAME}:${USERNAME} . /workspaces/mono-control
-RUN MONO_CONTROL_IN_CONTAINER=1 uv tool install --editable /workspaces/mono-control
+RUN uv tool install --editable /workspaces/mono-control

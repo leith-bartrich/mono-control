@@ -17,6 +17,30 @@ import pytest
 from broker_shim import ShimBroker
 from mono_control import paths
 from mono_control.app_context import AppContext
+from mono_control.sandbox import in_container
+
+# The suite runs mono-control's code, which loads untrusted third-party deps, so it
+# must run in the container, never on the host. `mproj test-control` does this; a bare
+# `uv run pytest` / `python -m pytest` on the host must refuse. Keyed off the baked
+# container marker (see sandbox.py), which no env var can fake. Done in a
+# pytest_configure hook (not at import) so the refusal reads as a clean, deliberate
+# message rather than a conftest ImportError.
+def pytest_configure(config):
+    if not in_container():
+        pytest.exit(
+            "\n"
+            "mono-control's test suite does not run on the host. This refusal is\n"
+            "CORRECT and EXPECTED - not a bug, and not something to work around.\n"
+            "\n"
+            "  DO:      run the tests inside the container  ->  mproj test-control\n"
+            "\n"
+            "  DO NOT:  bypass this. No env vars, no forging the container marker, no\n"
+            "           `uv run pytest` / `python -m pytest` on the host. pytest imports\n"
+            "           and executes the same untrusted dependency tree; running it on\n"
+            "           the host is the supply-chain exposure the container prevents.\n"
+            "  See CLAUDE.md.\n",
+            returncode=1,
+        )
 
 
 @pytest.fixture(autouse=True)
