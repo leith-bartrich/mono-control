@@ -20,6 +20,7 @@ import json
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -28,11 +29,25 @@ from mono_control.broker import (
     TypedBrokerMixin,
     wire_inventory_from_on_disk,
 )
-from mono_control.host_platform import FsProfile
 from mono_control.on_disk import OnDiskInventory, OnDiskRepo
 
+
+@dataclass(frozen=True)
+class FsProfile:
+    """The git filesystem-capability config a host's working tree needs.
+
+    The real (host-side) broker derives this natively from the host it runs on;
+    this test-side shim keeps a self-contained copy so the stamping logic below
+    can mirror what the broker does.
+    """
+
+    filemode: bool
+    symlinks: bool
+    ignorecase: bool
+
+
 # A concrete profile for tests (a Linux-ish host filesystem). The real broker
-# derives this from ``MONO_CONTROL_HOST_PLATFORM``; here it is fixed.
+# derives this natively from the host; here it is fixed.
 PROFILE = FsProfile(filemode=True, symlinks=True, ignorecase=False)
 
 _SLUG_KEY = "mono-control.slug"

@@ -14,7 +14,6 @@ from mono_control.app_context import AppContext
 from mono_control.aspects import attach_aspect_commands
 from mono_control.broker import BrokerClient, emit_schema
 from mono_control.config import ConfigError, RepoStore, load_config
-from mono_control.host_platform import require_valid as require_valid_host_platform
 from mono_control.paths import CONFIG_DIR
 from mono_control.sandbox import require_broker, require_container
 
@@ -232,8 +231,7 @@ def repl(ctx: typer.Context) -> None:
 
 
 def main() -> None:
-    """Console-script entrypoint: gate on sandbox + broker + host platform, then dispatch."""
+    """Console-script entrypoint: gate on sandbox + broker, then dispatch."""
     require_container()
     require_broker()
-    require_valid_host_platform()
     app()
