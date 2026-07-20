@@ -77,8 +77,9 @@ def require_broker() -> None:
     container can reach the host-side broker. If any is missing there is no way
     to perform git/filesystem effects, so refuse loudly.
 
-    Not yet wired into the global CLI gate; enforcement is flipped in a later
-    slice. For now it is defined and unit-tested only.
+    Enforced in the CLI gate: ``cli/app.py``'s ``main()`` calls this right after
+    ``require_container()``, so the console-script entrypoint refuses to run
+    without a fully configured broker.
     """
     missing = [name for name in BROKER_ENV if not os.environ.get(name)]
     if missing:

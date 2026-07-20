@@ -5,8 +5,10 @@ it calls back to a host-side broker (a JSON-RPC 2.0 endpoint injected by the
 shim). This package is the container-side half: the wire models, a stdlib-only
 client, an in-process fake for tests, and the schema the contract publishes.
 
-This is additive foundation (a walking skeleton) — nothing here is wired into
-the existing scanner/engine/CLI flows yet.
+This broker layer is now the live effect path: it is wired into
+``on_disk/scanner.py``, both engines, ``cli/app.py``, ``RepoStore``, and
+``config/loader.py``. The container performs no git/filesystem effects of its
+own — every such effect routes through here to the host-side broker.
 """
 
 from __future__ import annotations
