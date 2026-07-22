@@ -24,8 +24,9 @@
   //      as pytest) that VS Code activates in terminals;
   //   3. `uv tool install` — also expose `mono-control` as a standalone command
   //      on PATH (~/.local/bin), independent of venv activation.
-  // Both uv steps build the package and therefore rely on the
-  // MONO_CONTROL_IN_CONTAINER sentinel set on the service in docker-compose.yml.
+  // Both uv steps build the package, whose in-tree build backend (_build/gate.py)
+  // requires the container marker file baked into the image (/etc/mono-control-container)
+  // — present here, absent on the host, so a host build fails fast.
   "postCreateCommand": "sudo chown -R codespace:codespace $HOME/.claude && uv sync && uv tool install --force --editable .",
 
   "customizations": {

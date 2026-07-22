@@ -93,20 +93,21 @@ run with your full user privileges. Keeping it boxed in the container means an
 Two layers enforce this:
 
 - **Install-time gate.** An in-tree [PEP 517](https://peps.python.org/pep-0517/)
-  build backend checks for the container sentinel before it will build. Running
+  build backend checks for the container marker before it will build. Running
   `uv sync` (or `uv pip install -e .`) on the host fails fast — *before*
   resolving or installing any dependency — instead of pulling untrusted packages
-  onto your host. Inside the container the sentinel is present and the build
+  onto your host. Inside the container the marker is present and the build
   proceeds normally.
-- **Run-time gate.** The CLI entrypoint re-checks the same sentinel on startup
-  and refuses to run without it, so even a pre-built environment copied out to
-  the host won't execute.
+- **Run-time gate.** The CLI entrypoint (and the test suite) re-check the same
+  marker on startup and refuse to run without it, so even a pre-built environment
+  copied out to the host won't execute.
 
-The sentinel is the `MONO_CONTROL_IN_CONTAINER` variable set on the container by
-Docker Compose (the `environment:` key in
-[.devcontainer/docker-compose.yml](.devcontainer/docker-compose.yml)), so both
-modes — and every process inside the container — inherit it, and there is
-nothing to remember to turn on.
+The gate is a **marker file** (`/etc/mono-control-container`) baked into the image
+by the [Dockerfile](.devcontainer/Dockerfile) at a path *outside* the source tree —
+so a host checkout never carries it, and no environment variable can fake it. (An
+earlier design trusted a `MONO_CONTROL_IN_CONTAINER` env var, but a one-line
+`export` defeated it, so the gate was moved to the baked file.) Use `mproj`, which
+always runs mono-control in the container.
 
 ## Dev container
 

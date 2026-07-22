@@ -23,12 +23,12 @@ services:
     # `docker compose run --rm` overrides this with the real command.
     command: sleep infinity
     environment:
-      # Sandbox sentinel. Both the install-time build gate (_build/gate.py) and
-      # the run-time CLI gate (src/mono_control/sandbox.py) refuse to proceed
-      # unless this is set. On the service so every process — including the
-      # headless path — inherits it.
-      MONO_CONTROL_IN_CONTAINER: "1"
-      # Host-platform sentinel (see docs/design/host-platform.md). Interpolated
-      # from an overriding host env / .env, falling back to `generic` (matching
-      # the image's baked default). The shim's per-call `-e` still overrides this.
+      # Host-platform hint (see docs/design/host-platform.md). Interpolated from an
+      # overriding host env / .env, falling back to `generic` (the image's baked
+      # default); the shim's per-call `-e` overrides it.
+      #
+      # NOTE: there is deliberately NO MONO_CONTROL_IN_CONTAINER here. The sandbox
+      # gate is a marker FILE baked into the image (see _build/gate.py and
+      # src/mono_control/sandbox.py) — an env var cannot fake it and a host checkout
+      # never carries it. An env sentinel would be inert.
       MONO_CONTROL_HOST_PLATFORM: "${MONO_CONTROL_HOST_PLATFORM:-generic}"
