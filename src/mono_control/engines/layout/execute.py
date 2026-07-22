@@ -1,17 +1,18 @@
 """Execute stage: dispatch each plan item to the broker's layout verbs.
 
-The race-safe, on-disk mutations themselves — the atomic ``os.rename`` (and its
-cross-device fallback), the plan-time slug re-verification, occupancy guards, and
-the git checkout — are filesystem + git *effects*, so they run broker-side behind
-the thin ``place`` / ``relocate`` / ``retire`` / ``checkout`` verbs (the broker
-re-observes and keeps the race guards). This module is the container half: it
-turns each ``PlanItem`` into the right verb call(s) and rehydrates the broker's
-``{status, summary}`` result into a typed ``LayoutOutcome``.
+The race-safe, on-disk mutations themselves — the ``git worktree add`` /
+``worktree move`` / ``worktree remove``, the plan-time slug re-verification,
+occupancy guards, and the git checkout — are filesystem + git *effects*, so they
+run broker-side behind the thin ``place`` / ``relocate`` / ``retire`` /
+``checkout`` verbs (the broker re-observes and keeps the race guards). This module
+is the container half: it turns each ``PlanItem`` into the right verb call(s) and
+rehydrates the broker's ``{status, summary}`` result into a typed ``LayoutOutcome``.
 
 Composite intents (a place / relocate that also changes ref) are orchestrated
 here as ``place`` **then** ``checkout``: a checkout failure *after* a successful
-move is reported as ``partial`` so the user knows the on-disk state is ambiguous
-— the same "no partial-state surprise" contract the single-process engine had.
+worktree add/move is reported as ``partial`` so the user knows the on-disk state
+is ambiguous — the same "no partial-state surprise" contract the single-process
+engine had.
 """
 
 from __future__ import annotations
