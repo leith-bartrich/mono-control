@@ -3,8 +3,9 @@
 Step 2 makes mono-control a pure broker client; tests drive it against the
 in-process real-effect :class:`~broker_shim.ShimBroker` (standing in for the
 host-side broker in the other repo). ``broker_env`` wires one up over real temp
-``config`` / ``ws`` / ``off`` directories, monkeypatches the nominal path
-constants to match, and hands back an ``AppContext`` for CLI injection.
+``config`` / ``ws`` (work/worktree root) / ``off`` (bare/offline root) directories,
+monkeypatches the nominal path constants (``WORK_DIR`` / ``BARE_DIR``) to match,
+and hands back an ``AppContext`` for CLI injection.
 """
 
 from __future__ import annotations
@@ -53,7 +54,11 @@ def _git_identity(monkeypatch):
 
 @dataclass
 class BrokerEnv:
-    """A ready-to-use broker + the roots it operates on."""
+    """A ready-to-use broker + the roots it operates on.
+
+    ``ws`` is the work/worktree root (materialized), ``off`` is the bare/offline
+    root — the two roots the bare+worktree model threads everywhere.
+    """
 
     config_dir: Path
     ws: Path
@@ -68,12 +73,16 @@ class BrokerEnv:
 
 @pytest.fixture
 def broker_env(tmp_path, monkeypatch) -> BrokerEnv:
-    """A real-effect shim broker over fresh temp roots, with paths patched."""
+    """A real-effect shim broker over fresh temp roots, with paths patched.
+
+    ``ws`` is the work root (worktrees / materialized); ``off`` is the bare root
+    (bare repos / offline).
+    """
     config_dir = tmp_path / "config"
     ws = tmp_path / "ws"
     off = tmp_path / "off"
     ws.mkdir()
     off.mkdir()
-    monkeypatch.setattr(paths, "REPOS_DIR", ws)
-    monkeypatch.setattr(paths, "OFFLINE_DIR", off)
+    monkeypatch.setattr(paths, "WORK_DIR", ws)
+    monkeypatch.setattr(paths, "BARE_DIR", off)
     return BrokerEnv(config_dir=config_dir, ws=ws, off=off, broker=ShimBroker(config_dir, ws, off))

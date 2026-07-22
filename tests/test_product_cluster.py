@@ -50,7 +50,7 @@ def test_init_creates_offline_repo_with_aspect(broker_env):
     repo = RepoStore(env.broker).load("fresh")
     assert "product-cluster" in repo.aspects
     assert repo.name == "Fresh"
-    assert (env.off / "fresh" / ".git").is_dir()
+    assert GitRepo(env.off / "fresh").is_bare_repository()
     assert GitRepo(env.off / "fresh").slug() == "fresh"
 
 
@@ -61,7 +61,7 @@ def test_init_derives_slug_from_name(broker_env):
     slugs = RepoStore(env.broker).list()
     assert len(slugs) == 1
     assert slugs[0].startswith("my-cluster-")
-    assert (env.off / slugs[0] / ".git").is_dir()
+    assert GitRepo(env.off / slugs[0]).is_bare_repository()
 
 
 def test_init_refuses_existing_slug(broker_env):
@@ -91,13 +91,13 @@ def test_mat_moveto_then_demat_round_trip(broker_env, tmp_path):
     mat_result = _invoke(env, ["mat", "moveto", "cluster1"])
     assert mat_result.exit_code == 0, mat_result.output
     placed = env.ws / "products" / "cluster-1"
-    assert (placed / ".git").is_dir()
+    assert (placed / ".git").exists()
     assert GitRepo(placed).slug() == "cluster1"
 
     demat_result = _invoke(env, ["demat", "cluster1"])
     assert demat_result.exit_code == 0, demat_result.output
-    assert not placed.exists()
-    assert (env.off / "cluster1" / ".git").is_dir()
+    assert not placed.exists()  # worktree removed
+    assert GitRepo(env.off / "cluster1").is_bare_repository()  # bare survives
 
 
 def _materialize(env, tmp_path: Path, *, slug: str, name: str) -> None:
@@ -191,7 +191,7 @@ def test_demat_blocks_dirty_cluster(broker_env, tmp_path):
     res = _invoke(env, ["demat", "dc"])
     assert res.exit_code != 0
     assert "uncommitted changes" in res.output
-    assert (placed / ".git").is_dir()  # not retired
+    assert (placed / ".git").exists()  # not retired
 
 
 def test_mat_moveto_refuses_unmarked_repo(broker_env):
@@ -218,7 +218,7 @@ def test_mat_moveto_with_subdir_override(broker_env, tmp_path):
 
     result = _invoke(env, ["mat", "moveto", "cluster2", "friendly"])
     assert result.exit_code == 0, result.output
-    assert (env.ws / "products" / "friendly" / ".git").is_dir()
+    assert (env.ws / "products" / "friendly" / ".git").exists()
 
 
 def test_mat_branchat_blocks_on_unplaced_cluster(broker_env, tmp_path):
@@ -254,7 +254,7 @@ def test_mat_layout_target_declarative(broker_env, tmp_path):
     )
     result = _invoke(env, ["mat", "layout-target", "cluster4", "--branch", "main"])
     assert result.exit_code == 0, result.output
-    assert (env.ws / "products" / "cluster-four" / ".git").is_dir()
+    assert (env.ws / "products" / "cluster-four" / ".git").exists()
 
 
 def test_mat_branchat_rejects_unknown_sub_intent(broker_env):

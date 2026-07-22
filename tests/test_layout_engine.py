@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from broker_shim import ShimBroker, clone, run_git, PROFILE
+from broker_shim import ShimBroker, add_worktree, clone, run_git, GitRepo, PROFILE
 from mono_control.broker import FakeBroker
 from mono_control.engines.layout import plan, run
 from mono_control.engines.layout.execute import execute
@@ -215,42 +215,49 @@ def _roots(tmp_path):
 def test_integration_place_offline_into_workspace(tmp_path):
     head = _origin(tmp_path / "origin")
     broker, ws, off = _roots(tmp_path)
+    # offline = a bare repo, no worktree.
     clone(tmp_path / "origin", off / "alpha", profile=PROFILE, slug="alpha")
     target = LayoutTarget(targets={"alpha": LayoutTargetPresentCommit(commit=head, location="alpha")})
     report = run(target, broker=broker, inventory=scan(broker, ws, off), workspace_root=ws)
     assert report.outcomes[0].status == "placed"
-    assert (ws / "alpha" / ".git").is_dir()
-    assert not (off / "alpha").exists()
+    # place added a worktree; the bare repo is left in place (additive).
+    assert (ws / "alpha" / ".git").exists()
+    assert GitRepo(ws / "alpha").current_commit() == head
+    assert GitRepo(off / "alpha").is_bare_repository()
 
 
 def test_integration_retire_via_absent(tmp_path):
     _origin(tmp_path / "origin")
     broker, ws, off = _roots(tmp_path)
-    clone(tmp_path / "origin", ws / "alpha", profile=PROFILE, slug="alpha")
+    # materialized = a bare repo (bare root) plus a worktree (work root).
+    clone(tmp_path / "origin", off / "alpha", profile=PROFILE, slug="alpha")
+    add_worktree(off / "alpha", ws / "alpha")
     target = LayoutTarget(targets={"alpha": LayoutTargetAbsent()})
     report = run(target, broker=broker, inventory=scan(broker, ws, off), workspace_root=ws)
     assert report.outcomes[0].status == "retired"
-    assert not (ws / "alpha").exists()
-    assert (off / "alpha" / ".git").is_dir()
+    assert not (ws / "alpha").exists()  # worktree removed
+    assert GitRepo(off / "alpha").is_bare_repository()  # bare survives
 
 
-def test_integration_retire_blocked_when_offline_occupied(tmp_path):
+def test_integration_retire_blocked_when_dirty(tmp_path):
     _origin(tmp_path / "origin")
     broker, ws, off = _roots(tmp_path)
-    clone(tmp_path / "origin", ws / "alpha", profile=PROFILE, slug="alpha")
-    (off / "alpha").mkdir()  # occupy the offline spot
+    clone(tmp_path / "origin", off / "alpha", profile=PROFILE, slug="alpha")
+    add_worktree(off / "alpha", ws / "alpha")
+    (ws / "alpha" / "README.md").write_text("uncommitted\n")  # dirty worktree
     target = LayoutTarget(targets={"alpha": LayoutTargetAbsent()})
     report = run(target, broker=broker, inventory=scan(broker, ws, off), workspace_root=ws)
     assert report.outcomes[0].status == "blocked"
-    assert (ws / "alpha" / ".git").is_dir()  # untouched
+    assert (ws / "alpha" / ".git").exists()  # worktree left in place
 
 
 def test_integration_relocate(tmp_path):
     head = _origin(tmp_path / "origin")
     broker, ws, off = _roots(tmp_path)
-    clone(tmp_path / "origin", ws / "old", profile=PROFILE, slug="alpha")
+    clone(tmp_path / "origin", off / "alpha", profile=PROFILE, slug="alpha")
+    add_worktree(off / "alpha", ws / "old")
     target = LayoutTarget(targets={"alpha": LayoutTargetPresentCommit(commit=head, location="new")})
     report = run(target, broker=broker, inventory=scan(broker, ws, off), workspace_root=ws)
     assert report.outcomes[0].status == "relocated"
     assert not (ws / "old").exists()
-    assert (ws / "new" / ".git").is_dir()
+    assert (ws / "new" / ".git").exists()

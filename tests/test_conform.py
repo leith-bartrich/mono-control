@@ -5,7 +5,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from broker_shim import GitRepo, clone, run_git, PROFILE
+from broker_shim import GitRepo, add_worktree, clone, run_git, PROFILE
 from mono_control.aspects.product_cluster.cli import app as cluster_app
 from mono_control.config import Repo, RepoStore
 
@@ -68,7 +68,7 @@ def test_conform_swap_materializes_cluster_and_members(broker_env, tmp_path):
 
     res = _invoke(env, ["conform", "swap", "cluster1"])
     assert res.exit_code == 0, res.output
-    assert (env.ws / "products" / "cluster1" / ".git").is_dir()
+    assert (env.ws / "products" / "cluster1" / ".git").exists()
     assert GitRepo(env.ws / "src" / "m1").slug() == "m1"
     assert GitRepo(env.ws / "libs" / "m2").slug() == "m2"
 
@@ -76,7 +76,9 @@ def test_conform_swap_materializes_cluster_and_members(broker_env, tmp_path):
 def test_conform_swap_pre_clears_extras(broker_env, tmp_path):
     env = broker_env
     _origin(tmp_path / "extrao")
-    clone(tmp_path / "extrao", env.ws / "extra", profile=PROFILE, slug="extra")
+    # A materialized "extra": a bare repo plus a worktree under the work root.
+    clone(tmp_path / "extrao", env.off / "extra", profile=PROFILE, slug="extra")
+    add_worktree(env.off / "extra", env.ws / "extra")
     _seed(env, "extra", tmp_path / "extrao")
 
     _cluster_origin(tmp_path / "clo", {})  # empty layout: just the cluster
@@ -84,36 +86,38 @@ def test_conform_swap_pre_clears_extras(broker_env, tmp_path):
 
     res = _invoke(env, ["conform", "swap", "cluster1"])
     assert res.exit_code == 0, res.output
-    assert (env.ws / "products" / "cluster1" / ".git").is_dir()
-    assert not (env.ws / "extra").exists()
-    assert (env.off / "extra" / ".git").is_dir()
+    assert (env.ws / "products" / "cluster1" / ".git").exists()
+    assert not (env.ws / "extra").exists()  # worktree removed
+    assert GitRepo(env.off / "extra").is_bare_repository()  # bare survives
 
 
 def test_conform_clear_retires_all(broker_env, tmp_path):
     env = broker_env
     _origin(tmp_path / "ao")
-    clone(tmp_path / "ao", env.ws / "alpha", profile=PROFILE, slug="alpha")
+    clone(tmp_path / "ao", env.off / "alpha", profile=PROFILE, slug="alpha")
+    add_worktree(env.off / "alpha", env.ws / "alpha")
     _seed(env, "alpha", tmp_path / "ao")
 
     res = _invoke(env, ["conform", "clear"])
     assert res.exit_code == 0, res.output
-    assert not (env.ws / "alpha").exists()
-    assert (env.off / "alpha" / ".git").is_dir()
+    assert not (env.ws / "alpha").exists()  # worktree removed
+    assert GitRepo(env.off / "alpha").is_bare_repository()  # bare survives
 
 
-def test_conform_clear_is_nondestructive_for_dirty(broker_env, tmp_path):
-    """Retire moves to offline (preserving work), so a dirty repo clears safely."""
+def test_conform_clear_blocks_dirty_member(broker_env, tmp_path):
+    """A dirty member's worktree isn't silently discarded: the broker's dirty-gated
+    retire refuses it, so clear reports failure and leaves the worktree in place."""
     env = broker_env
     _origin(tmp_path / "ao")
-    clone(tmp_path / "ao", env.ws / "alpha", profile=PROFILE, slug="alpha")
+    clone(tmp_path / "ao", env.off / "alpha", profile=PROFILE, slug="alpha")
+    add_worktree(env.off / "alpha", env.ws / "alpha")
     _seed(env, "alpha", tmp_path / "ao")
     (env.ws / "alpha" / "README.md").write_text("uncommitted change\n")  # dirty
 
     res = _invoke(env, ["conform", "clear"])
-    assert res.exit_code == 0, res.output
-    assert not (env.ws / "alpha").exists()
-    assert (env.off / "alpha" / ".git").is_dir()
-    assert (env.off / "alpha" / "README.md").read_text() == "uncommitted change\n"
+    assert res.exit_code != 0
+    assert (env.ws / "alpha" / ".git").exists()  # worktree kept
+    assert (env.ws / "alpha" / "README.md").read_text() == "uncommitted change\n"
 
 
 def test_conform_swap_requires_aspect(broker_env, tmp_path):
@@ -135,7 +139,7 @@ def test_conform_clear_blocks_dirty_cluster(broker_env, tmp_path):
     res = _invoke(env, ["conform", "clear"])
     assert res.exit_code != 0
     assert "pc1" in res.output
-    assert (env.ws / "products" / "pc1" / ".git").is_dir()  # untouched
+    assert (env.ws / "products" / "pc1" / ".git").exists()  # untouched
 
 
 def test_conform_swap_blocks_dirty_cluster(broker_env, tmp_path):
@@ -151,20 +155,21 @@ def test_conform_swap_blocks_dirty_cluster(broker_env, tmp_path):
     res = _invoke(env, ["conform", "swap", "pcb"])
     assert res.exit_code != 0
     assert "pca" in res.output
-    assert (env.ws / "products" / "pca" / ".git").is_dir()  # not torn down
+    assert (env.ws / "products" / "pca" / ".git").exists()  # not torn down
 
 
 def test_conform_swap_unreachable_cluster_leaves_workspace(broker_env, tmp_path):
     """Sourcing the cluster first means an unreachable one fails before any clear."""
     env = broker_env
     _origin(tmp_path / "ao")
-    clone(tmp_path / "ao", env.ws / "alpha", profile=PROFILE, slug="alpha")
+    clone(tmp_path / "ao", env.off / "alpha", profile=PROFILE, slug="alpha")
+    add_worktree(env.off / "alpha", env.ws / "alpha")
     _seed(env, "alpha", tmp_path / "ao")
     _seed(env, "pcbad", tmp_path / "missing", aspects={"product-cluster"})
 
     res = _invoke(env, ["conform", "swap", "pcbad"])
     assert res.exit_code != 0
-    assert (env.ws / "alpha" / ".git").is_dir()  # workspace NOT cleared
+    assert (env.ws / "alpha" / ".git").exists()  # workspace NOT cleared
 
 
 def test_relayout_applies_layout_delta(broker_env, tmp_path):
@@ -184,16 +189,17 @@ def test_relayout_applies_layout_delta(broker_env, tmp_path):
     _seed(env, "cluster1", tmp_path / "clo", aspects={"product-cluster"})
     assert _invoke(env, ["mat", "moveto", "cluster1"]).exit_code == 0
     _origin(tmp_path / "extrao")
-    clone(tmp_path / "extrao", env.ws / "extra", profile=PROFILE, slug="extra")
+    clone(tmp_path / "extrao", env.off / "extra", profile=PROFILE, slug="extra")
+    add_worktree(env.off / "extra", env.ws / "extra")
     _seed(env, "extra", tmp_path / "extrao")
 
     res = _invoke(env, ["conform", "relayout", "cluster1"])
     assert res.exit_code == 0, res.output
-    assert (env.ws / "products" / "cluster1" / ".git").is_dir()
+    assert (env.ws / "products" / "cluster1" / ".git").exists()
     assert GitRepo(env.ws / "src" / "m1").slug() == "m1"
     assert GitRepo(env.ws / "libs" / "m2").slug() == "m2"
-    assert not (env.ws / "extra").exists()
-    assert (env.off / "extra" / ".git").is_dir()
+    assert not (env.ws / "extra").exists()  # worktree removed
+    assert GitRepo(env.off / "extra").is_bare_repository()  # bare survives
 
 
 def test_relayout_allows_dirty_target_cluster(broker_env, tmp_path):
@@ -208,7 +214,7 @@ def test_relayout_allows_dirty_target_cluster(broker_env, tmp_path):
 
     res = _invoke(env, ["conform", "relayout", "cluster1"])
     assert res.exit_code == 0, res.output
-    assert (env.ws / "products" / "cluster1" / ".git").is_dir()
+    assert (env.ws / "products" / "cluster1" / ".git").exists()
     assert GitRepo(env.ws / "src" / "m1").slug() == "m1"
 
 
@@ -225,15 +231,29 @@ def test_relayout_implied_cluster(broker_env, tmp_path):
     assert GitRepo(env.ws / "m1").slug() == "m1"
 
 
-def test_conform_clear_allow_dirty_override(broker_env, tmp_path):
+def test_conform_clear_allow_dirty_still_guards_uncommitted_work(broker_env, tmp_path):
+    """``--allow-dirty`` bypasses the container's reproducibility gate, but the
+    broker's dirty-gated retire independently refuses to discard uncommitted work —
+    so a dirty cluster is kept. Committing makes the worktree clean; clear then
+    succeeds and the committed state is safe in the surviving bare repo.
+    """
     env = broker_env
     _origin(tmp_path / "pco")
     _seed(env, "pc1", tmp_path / "pco", aspects={"product-cluster"})
     assert _invoke(env, ["mat", "moveto", "pc1"]).exit_code == 0
-    (env.ws / "products" / "pc1" / "README.md").write_text("dirty\n")
+    placed = env.ws / "products" / "pc1"
+    (placed / "README.md").write_text("dirty\n")
 
-    assert _invoke(env, ["conform", "clear"]).exit_code != 0  # gated
-    res = _invoke(env, ["conform", "clear", "--allow-dirty"])  # override
-    assert res.exit_code == 0, res.output
-    assert not (env.ws / "products" / "pc1").exists()
-    assert (env.off / "pc1" / ".git").is_dir()
+    assert _invoke(env, ["conform", "clear"]).exit_code != 0  # gated by container
+    # --allow-dirty gets past the gate, but the worktree removal is refused.
+    res = _invoke(env, ["conform", "clear", "--allow-dirty"])
+    assert res.exit_code != 0
+    assert (placed / ".git").exists()  # kept; uncommitted work intact
+
+    # Commit, and clear succeeds — the worktree is removed, the bare repo survives.
+    run_git(["add", "."], cwd=placed)
+    run_git(["commit", "-m", "wip"], cwd=placed)
+    res2 = _invoke(env, ["conform", "clear"])
+    assert res2.exit_code == 0, res2.output
+    assert not placed.exists()
+    assert GitRepo(env.off / "pc1").is_bare_repository()
