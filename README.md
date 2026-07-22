@@ -4,9 +4,24 @@ A **repo state manager** for the fiemono workspace — *not* a build system.
 
 mono-control's job is to bring a set of project repositories to a known,
 declared state. It reads the workspace manifest from `mono-config`, makes sure
-the right repos exist in `mono-repos` at the right revisions, and reports on
-what's actually checked out. It does not build anything and does not look inside
-the repos it manages.
+the right repos exist as worktrees in `mono-work` at the right revisions, and
+reports on what's actually checked out. It does not build anything and does not
+look inside the repos it manages.
+
+## Physical model: bare repos + worktrees
+
+Every managed repository is a **bare** repo under `mono-repos-bare/<slug>` that
+is created once and **never moves**. Bringing it into the workspace is an
+additive `git worktree add` under `mono-work/…`; retiring it is `git worktree
+remove` (the bare repo, and everything committed in it, survives). This replaced
+an earlier "clone into an offline dir, then rename it into the workspace" model,
+whose directory move failed (`WinError 5` / `EACCES`) when an IDE or drvfs held
+the directory being renamed — a worktree add moves nothing held, so that class of
+failure is gone by construction.
+
+The `offline` / `materialized` states are reinterpreted onto this model rather
+than replaced: **offline = a bare repo with no worktree**; **materialized = a
+bare repo with a worktree** under `mono-work`.
 
 ## Use through the shim
 
@@ -29,12 +44,14 @@ deployment.
 - Reads the workspace configuration from `mono-config`.
 - Knows which repos should exist on disk, their remotes, and which
   branches / tags / commits matter.
-- **Acquires** repos into a holding area (`mono-repos-offline/<slug>`) — the
-  *source engine* clones (or `git init`s a brand-new repo) and stamps each
-  checkout with the host's filesystem-capability profile and its identity slug.
-- **Arranges** them in the workspace (`mono-repos/...`) — the *layout engine*
-  places, relocates, retires, and checks out commits as a target says,
-  race-safely and per-repo independently.
+- **Acquires** repos as **bare** repos (`mono-repos-bare/<slug>`) — the *source
+  engine* clones `--bare` (or `git init --bare`s a brand-new repo) and stamps each
+  bare repo with the host's filesystem-capability profile and its identity slug
+  (inherited by every worktree added off it).
+- **Arranges** them in the workspace (`mono-work/...`) — the *layout engine*
+  places (`git worktree add`), relocates (`git worktree move`), retires (`git
+  worktree remove`), and checks out commits as a target says, race-safely and
+  per-repo independently.
 - Knows about *aspects* — extra roles a repo can carry (today:
   `product-cluster`); the per-aspect CLI groups (`mproj control
   product-cluster <verb>`) plug onto the same engine machinery.
@@ -62,24 +79,32 @@ mono-control        the state manager itself — baked into a slim container ima
 The container is defined by Docker Compose and serves two modes from one image:
 
 - **Interactive development** (VS Code "Reopen in Container"): live source and
-  the sibling `mono-config` / `mono-repos` directories are bind-mounted under
+  the sibling `mono-config` / `mono-work` directories are bind-mounted under
   `/workspaces`.
 - **Headless execution** (the shim): the shim runs `docker compose run` against
-  the baked image and bind-mounts the workspace's `mono-config` / `mono-repos`
+  the baked image and bind-mounts the workspace's `mono-config` / `mono-work`
   into the container per invocation.
 
 Inside the container the managed directories always live at fixed paths:
 
 ```
-/workspaces/mono-control        this repo — the state manager (baked into the image)
-/workspaces/mono-config          the workspace manifest (which repos, which states)
-/workspaces/mono-repos           where managed project repos are *placed* (materialized)
-/workspaces/mono-repos-offline   holding area for acquired-but-not-placed checkouts
+/workspaces/mono-control       this repo — the state manager (baked into the image)
+/workspaces/mono-config        the workspace manifest (which repos, which states)
+/workspaces/mono-work          where managed repos are *placed* — a worktree per materialized repo
+/workspaces/mono-repos-bare    the bare repos (one per slug; created once, never moved)
 ```
 
 The shim lives on the host and is deliberately minimal (standard library only,
 zero third-party dependencies); the real work happens inside the container, for
 host isolation and a reduced attack surface.
+
+**IDE scoping (current intent, not yet solidified).** The division of `mono-work`
+(worktrees a developer actually edits) from `mono-repos-bare` (bare object stores)
+is meant to let an editor such as VS Code be scoped to **`mono-work` only**, and
+*not* index `mono-repos-bare`. Keeping an IDE off the bare repos is also what makes
+`git worktree add`/`move`/`remove` safe from the held-directory move failures the
+old model hit. This is the *current intent* — the exact IDE-scoping mechanism is
+not yet solidified.
 
 ## Runs only in the container
 
@@ -172,11 +197,11 @@ repo add <name> [--slug X]               # author a repo def (slug auto-derived)
 repo list                                # show repo defs
 repo show <name-or-slug>                 # one repo in detail
 
-repo init <name>                         # def + brand-new offline checkout
-repo mat moveto <name-or-slug> <subdir>  # place at mono-repos/<subdir>
+repo init <name>                         # def + brand-new offline (bare) repo
+repo mat moveto <name-or-slug> <subdir>  # add a worktree at mono-work/<subdir>
 repo mat branchat <name-or-slug> <br>    # check out a branch at current location
 repo mat commit <name-or-slug> <sha>     # check out a commit (detached)
-repo demat <name-or-slug>                # retire to offline
+repo demat <name-or-slug>                # retire to offline (remove the worktree)
 
 product-cluster list-available           # repos declaring the aspect
 product-cluster init <name>              # new product-cluster repo
