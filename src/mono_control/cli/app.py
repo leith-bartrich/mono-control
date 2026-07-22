@@ -1,5 +1,6 @@
 """Command-line entrypoint for mono-control (Typer + Rich)."""
 
+import json
 import shlex
 from importlib.metadata import version
 from pathlib import Path
@@ -9,11 +10,12 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from mono_control.app_context import AppContext
 from mono_control.aspects import attach_aspect_commands
+from mono_control.broker import BrokerClient, emit_schema
 from mono_control.config import ConfigError, RepoStore, load_config
-from mono_control.host_platform import require_valid as require_valid_host_platform
-from mono_control.paths import CONFIG_DIR, OFFLINE_DIR, REPOS_DIR
-from mono_control.sandbox import require_container
+from mono_control.paths import CONFIG_DIR
+from mono_control.sandbox import require_broker, require_container
 
 from .config import config_app
 from .repo import repo_app
@@ -60,32 +62,43 @@ def _root(
             "A Windows-style path like 'C:/...' is relative inside the container.",
             param_hint="--config-dir",
         )
-    ctx.obj = config_dir
+    # Preserve a broker injected by tests (via ``obj=``); otherwise build the real
+    # stdlib HTTP client from the shim-injected ``MONO_BROKER_*`` environment.
+    injected = ctx.obj if isinstance(ctx.obj, AppContext) else None
+    broker = injected.broker if injected is not None else BrokerClient()
+    ctx.obj = AppContext(config_dir=config_dir, broker=broker)
 
 
 @app.command()
 def status(ctx: typer.Context) -> None:
-    """Report which managed workspace directories are visible."""
+    """Report which managed workspace directories are visible (host-side, via the broker)."""
+    app_ctx: AppContext = ctx.obj
     table = Table("status", "path", show_edge=False, box=None)
-    for path in (ctx.obj, REPOS_DIR, OFFLINE_DIR):
-        if path.is_dir():
-            table.add_row("[green]ok[/green]", str(path))
-        else:
-            table.add_row("[red]missing[/red]", str(path))
+    # The container has no mounts of its own; report what the broker observes.
+    try:
+        inventory = app_ctx.broker.scan()
+        table.add_row("[green]ok[/green]", "broker reachable")
+        table.add_row(
+            "[green]ok[/green]",
+            f"{len(inventory.repos)} managed repo(s), "
+            f"{len(inventory.unmanaged)} unmanaged",
+        )
+    except Exception as e:  # broker unreachable / misconfigured
+        table.add_row("[red]missing[/red]", f"broker unreachable: {e}")
     console.print(table)
 
 
 @app.command()
 def validate(ctx: typer.Context) -> None:
-    """Load and validate the mono-config directory (including repo definitions)."""
-    config_dir: Path = ctx.obj
+    """Load and validate the workspace config (including repo definitions)."""
+    app_ctx: AppContext = ctx.obj
     try:
-        load_config(config_dir)
+        load_config(app_ctx.broker)
     except ConfigError as e:
         console.print(f"[red]error:[/red] {e}")
         raise typer.Exit(code=1)
 
-    store = RepoStore.from_config_dir(config_dir)
+    store = RepoStore(app_ctx.broker)
     slugs = store.list(include_retired=True)
     errors = []
     for slug in slugs:
@@ -98,6 +111,16 @@ def validate(ctx: typer.Context) -> None:
             console.print(f"[red]error[/red] repo {slug}: {e}")
         raise typer.Exit(code=1)
     console.print(f"[green]ok:[/green] config is valid ({len(slugs)} repo(s))")
+
+
+@app.command("emit-schema")
+def emit_schema_cmd() -> None:
+    """Print the broker wire-contract JSON Schema to stdout.
+
+    Pure and effect-free — no broker connection needed. This is what the shim's
+    future ``json-schema-control`` invokes to publish the contract.
+    """
+    typer.echo(json.dumps(emit_schema(), indent=2, sort_keys=True))
 
 
 @app.command("version")
@@ -208,7 +231,7 @@ def repl(ctx: typer.Context) -> None:
 
 
 def main() -> None:
-    """Console-script entrypoint: gate on the sandbox + host platform, then dispatch."""
+    """Console-script entrypoint: gate on sandbox + broker, then dispatch."""
     require_container()
-    require_valid_host_platform()
+    require_broker()
     app()

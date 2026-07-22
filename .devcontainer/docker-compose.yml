@@ -2,18 +2,16 @@
 # tool, shared by both use modes:
 #
 #   Mode 1 (interactive dev): devcontainer.json layers docker-compose.devcontainer.yml
-#     on top of this, bind-mounting live source and the sibling workspace dirs.
+#     on top of this, bind-mounting live source only (for edit-immediacy).
 #   Mode 2 (headless): the host `mproj` shim runs `docker compose run --rm` against
-#     THIS file alone, supplying the workspace's mono-config / mono-repos as per-run
-#     `-v` bind mounts whose host paths it resolves at call time. The container-side
-#     targets are fixed at /workspaces/mono-config and /workspaces/mono-repos to
-#     match src/mono_control/paths.py.
+#     THIS file alone.
 #
-# What lives here is exactly what both modes share: the image, the sandbox
-# sentinel, and the run context. mono-control itself is baked INTO the image (see
-# the Dockerfile), so it needs no mount in the headless path. The mutable
-# workspace dirs are intentionally NOT mounted here — dev adds them via the
-# overlay, headless adds them per-run via the shim.
+# Step 2: the container performs NO git / filesystem / mono-config effects itself —
+# it calls back to a host-side broker over JSON-RPC. The shim stands up that broker
+# and injects its coordinates (MONO_BROKER_HOST / PORT / TOKEN) per run; git runs
+# natively on the host. So there are NO workspace bind mounts in EITHER mode, and
+# the container holds no credential. mono-control itself is baked INTO the image
+# (see the Dockerfile), so it needs no source mount in the headless path.
 services:
   mono-control:
     build:
@@ -25,26 +23,12 @@ services:
     # `docker compose run --rm` overrides this with the real command.
     command: sleep infinity
     environment:
-      # Sandbox sentinel. Both the install-time build gate (_build/gate.py) and
-      # the run-time CLI gate (src/mono_control/sandbox.py) refuse to proceed
-      # unless this is set. On the service so every process — including the
-      # headless path — inherits it.
-      MONO_CONTROL_IN_CONTAINER: "1"
-      # Host-platform sentinel (see docs/design/host-platform.md). Interpolated
-      # from an overriding host env / .env, falling back to `generic` (matching
-      # the image's baked default). The shim's per-call `-e` still overrides this.
+      # Host-platform hint (see docs/design/host-platform.md). Interpolated from an
+      # overriding host env / .env, falling back to `generic` (the image's baked
+      # default); the shim's per-call `-e` overrides it.
+      #
+      # NOTE: there is deliberately NO MONO_CONTROL_IN_CONTAINER here. The sandbox
+      # gate is a marker FILE baked into the image (see _build/gate.py and
+      # src/mono_control/sandbox.py) — an env var cannot fake it and a host checkout
+      # never carries it. An env sentinel would be inert.
       MONO_CONTROL_HOST_PLATFORM: "${MONO_CONTROL_HOST_PLATFORM:-generic}"
-      # GitHub credential (see docs/design/github-auth.md). A SECRET, so unlike the
-      # sentinels above it has no baked default in the image — it is interpolated
-      # from the environment of whoever runs compose and is empty when absent.
-      #
-      # Headless: the shim resolves a token (scoped PAT, else `gh auth token`) and
-      # exports it into the environment it hands to `docker compose`, so it lands
-      # here without ever appearing in the host process's argv.
-      # VS Code "Reopen in Container" (which the shim is not part of): picked up
-      # from your own shell environment, if you export it there.
-      #
-      # Empty is not an error: public remotes need no credential, and the helper
-      # exits silently when the var is unset. Private remotes then fail loudly
-      # (GIT_TERMINAL_PROMPT=0) rather than prompting.
-      MONO_CONTROL_GITHUB_TOKEN: "${MONO_CONTROL_GITHUB_TOKEN:-}"

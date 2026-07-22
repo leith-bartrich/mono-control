@@ -93,52 +93,29 @@ run with your full user privileges. Keeping it boxed in the container means an
 Two layers enforce this:
 
 - **Install-time gate.** An in-tree [PEP 517](https://peps.python.org/pep-0517/)
-  build backend checks for the container sentinel before it will build. Running
+  build backend checks for the container marker before it will build. Running
   `uv sync` (or `uv pip install -e .`) on the host fails fast — *before*
   resolving or installing any dependency — instead of pulling untrusted packages
-  onto your host. Inside the container the sentinel is present and the build
+  onto your host. Inside the container the marker is present and the build
   proceeds normally.
-- **Run-time gate.** The CLI entrypoint re-checks the same sentinel on startup
-  and refuses to run without it, so even a pre-built environment copied out to
-  the host won't execute.
+- **Run-time gate.** The CLI entrypoint (and the test suite) re-check the same
+  marker on startup and refuse to run without it, so even a pre-built environment
+  copied out to the host won't execute.
 
-The sentinel is the `MONO_CONTROL_IN_CONTAINER` variable set on the container by
-Docker Compose (the `environment:` key in
-[.devcontainer/docker-compose.yml](.devcontainer/docker-compose.yml)), so both
-modes — and every process inside the container — inherit it, and there is
-nothing to remember to turn on.
+The gate is a **marker file** (`/etc/mono-control-container`) baked into the image
+by the [Dockerfile](.devcontainer/Dockerfile) at a path *outside* the source tree —
+so a host checkout never carries it, and no environment variable can fake it. (An
+earlier design trusted a `MONO_CONTROL_IN_CONTAINER` env var, but a one-line
+`export` defeated it, so the gate was moved to the baked file.) Use `mproj`, which
+always runs mono-control in the container.
 
 ## GitHub authentication
 
-Managed repos are usually private, so cloning them needs a credential — and the
-container cannot get one itself: your host's lives in an OS keyring (Windows
-Credential Manager, the macOS Keychain, `gh`'s store) that a Linux container cannot
-reach. The credential is therefore **handed in per invocation** by the shim, as
-`MONO_CONTROL_GITHUB_TOKEN`.
-
-You do not normally set this yourself. `mproj` resolves a token host-side: it uses
-`MONO_CONTROL_GITHUB_TOKEN` if you have exported one, and otherwise falls back to
-your `gh auth token` (warning when it does).
-
-**Prefer a scoped token.** mono-control never writes to a remote — it only clones,
-fetches refs, and checks out — so a **fine-grained PAT with read-only Contents,
-limited to the repos you manage**, is all it needs. A `gh` OAuth token, by contrast,
-carries `repo` + `workflow` + `gist` *write* access to everything you own. Export the
-scoped one and the fallback never fires:
-
-```sh
-export MONO_CONTROL_GITHUB_TOKEN=github_pat_...
-```
-
-The token is read from the environment by a credential helper baked into the image
-and is **never written to disk** — in particular, never into a clone's `.git/config`,
-which lives on your host via the bind mount and would persist there indefinitely. The
-helper is registered for `https://github.com` **only**, so a wrong or malicious remote
-URL in a repo definition can never be handed your token. Without a usable credential
-git fails loudly (`GitAuthError`, naming both ways out) rather than prompting.
-
-Full rationale, including what a stolen token would and would not buy an attacker:
-[docs/design/github-auth.md](docs/design/github-auth.md).
+Cloning private repos needs a credential, but the **container never holds one**.
+All git and filesystem effects run on the *host* via the broker (see the broker
+layer), so acquisition uses your host's own git credentials — the OS keyring
+(Windows Credential Manager, the macOS Keychain) or `gh`'s store that native git
+already reads. Nothing is injected into, or written from, the container.
 
 ## Dev container
 

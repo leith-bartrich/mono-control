@@ -42,45 +42,13 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # it applies in the headless path too, which runs no VS Code lifecycle hooks.
 RUN git config --system --add safe.directory '*'
 
-# GitHub credential helper (see docs/design/github-auth.md).
-#
-# mono-control clones private repos over HTTPS, so git needs a credential. The
-# container cannot obtain one itself — the host's is in an OS keyring a Linux
-# container cannot reach — so the shim supplies MONO_CONTROL_GITHUB_TOKEN per
-# invocation and this helper hands it to git.
-#
-# It reads the token from the ENVIRONMENT and never persists it. That is the
-# whole point: the obvious shortcut (`url.insteadOf` with an embedded token)
-# would write the credential into every clone's .git/config — files that live on
-# the HOST via the bind mounts, where they would persist indefinitely.
-#
-# Registered ONLY for https://github.com. This is load-bearing, not decorative:
-# whatever URL ends up in a repo definition — a typo, a bad PR into mono-config,
-# a compromised upstream — git will never hand the token to another host.
-#
-# Written inline rather than COPYed because .dockerignore excludes .devcontainer/.
-RUN printf '%s\n' \
-        '#!/bin/sh' \
-        '# git credential helper for mono-control. Supplies MONO_CONTROL_GITHUB_TOKEN,' \
-        '# read from the environment so it is never written to any .git/config.' \
-        '# Registered for https://github.com only (see git config --system, below).' \
-        '[ "$1" = "get" ] || exit 0' \
-        '[ -n "$MONO_CONTROL_GITHUB_TOKEN" ] || exit 0' \
-        'echo "username=x-access-token"' \
-        'echo "password=$MONO_CONTROL_GITHUB_TOKEN"' \
-        > /usr/local/bin/git-credential-mono \
-    && chmod 0755 /usr/local/bin/git-credential-mono \
-    && git config --system credential."https://github.com".helper mono
-
-# Never let git block on an interactive prompt. Without a usable credential the
-# old behavior was to prompt on the container's TTY — which is how a missing token
-# presented as a mysterious "Username for 'https://github.com':" rather than an
-# error. Fail loudly instead; mono-control maps the result to a typed GitAuthError.
-#
-# Baked as a persistent ENV: like MONO_CONTROL_HOST_PLATFORM=generic, this is an
-# operational default with no security meaning. The TOKEN itself is a secret and is
-# deliberately baked as neither ENV nor ARG — it arrives only at run time.
-ENV GIT_TERMINAL_PROMPT=0
+# The sandbox marker — THE security gate for both the build backend (_build/gate.py)
+# and the run-time CLI/test gates (mono_control.sandbox). Baked at a system path
+# OUTSIDE the source tree, so a host checkout never carries it and no environment
+# variable can fake it (the old MONO_CONTROL_IN_CONTAINER env sentinel was a one-line
+# bypass). Created here as root, before the USER switch, so it exists for the
+# editable install below (whose build backend checks it).
+RUN printf 'mono-control dev container\n' > /etc/mono-control-container
 
 # Where the baked mono-control environment lives. DELIBERATELY outside
 # /workspaces/mono-control: dev mode bind-mounts live source over that path, which
@@ -94,12 +62,11 @@ ENV MONO_CONTROL_VENV="/home/${USERNAME}/.mono-control-venv"
 # ~/.local/bin stays on PATH for any other user-installed tooling.
 ENV PATH="${MONO_CONTROL_VENV}/bin:/home/${USERNAME}/.local/bin:${PATH}"
 
-# Safe default for the host-platform sentinel (see docs/design/host-platform.md).
-# DELIBERATELY baked as a persistent ENV — unlike MONO_CONTROL_IN_CONTAINER, which
-# is intentionally NOT baked (the security gate must be absent on the host). This
-# one is an operational default with no security meaning: the image is
-# multi-platform, so `generic` is the safe fallback the shim / dev container
-# override per invocation with the detected host.
+# Safe default for the host-platform hint (see docs/design/host-platform.md).
+# Baked as a persistent ENV — an operational default with no security meaning: the
+# image is multi-platform, so `generic` is the safe fallback the shim / dev
+# container override per invocation with the detected host. (The security gate is
+# the marker file created above, not any env var.)
 ENV MONO_CONTROL_HOST_PLATFORM=generic
 
 USER ${USERNAME}
@@ -118,12 +85,11 @@ USER ${USERNAME}
 # constraints file, so every rebuild would be an unpinned resolve. `--no-dev`
 # keeps pytest and friends out of the shipped artifact.
 #
-# The sentinel is set inline for THIS build step only — the build gate
-# (_build/gate.py) requires it, and image build is the sanctioned container
-# context. It is deliberately not baked as a persistent ENV; the run-time gate
-# relies on the sentinel set on the service in docker-compose.yml.
+# The build backend (_build/gate.py) requires the sandbox marker created above;
+# image build is the sanctioned container context, and the marker is present by
+# now, so the editable install proceeds. On the host the marker is absent, so the
+# same build fails fast.
 COPY --chown=${USERNAME}:${USERNAME} . /workspaces/mono-control
 RUN cd /workspaces/mono-control \
-    && MONO_CONTROL_IN_CONTAINER=1 \
-       UV_PROJECT_ENVIRONMENT="${MONO_CONTROL_VENV}" \
+    && UV_PROJECT_ENVIRONMENT="${MONO_CONTROL_VENV}" \
        uv sync --locked --no-dev

@@ -1,8 +1,16 @@
+from pathlib import Path
+
 from typer.testing import CliRunner
 
+from mono_control.app_context import AppContext
+from mono_control.broker import FakeBroker, WireInventory, WireRepo, WireUnmanaged
 from mono_control.cli import app
 
 runner = CliRunner()
+
+# Absolute inside the container (the only place the suite runs); satisfies the
+# root callback's --config-dir check without depending on a real config tree.
+_CONFIG_DIR = Path("/workspaces/mono-config")
 
 
 def test_version():
@@ -11,11 +19,36 @@ def test_version():
     assert "mono-control" in result.stdout
 
 
-def test_status_runs():
-    result = runner.invoke(app, ["status"])
+def test_status_reports_broker_inventory():
+    # Step 2: the container has no mounts of its own; `status` reports what the
+    # broker observes (reachability + managed/unmanaged counts), not dir paths.
+    inventory = WireInventory(
+        repos=[
+            WireRepo(slug="alpha", location="alpha", state="materialized", commit="c0ffee", dirty=False),
+            WireRepo(slug="beta", location="beta", state="offline", commit=None, dirty=False),
+        ],
+        unmanaged=[WireUnmanaged(location="stranger", state="materialized")],
+    )
+    ctx = AppContext(config_dir=_CONFIG_DIR, broker=FakeBroker(inventory=inventory))
+    result = runner.invoke(app, ["status"], obj=ctx)
     assert result.exit_code == 0
-    # reports all three managed workspace dirs, including the offline holding area
-    assert "mono-repos-offline" in result.output
+    assert "broker reachable" in result.output
+    assert "2 managed repo(s)" in result.output
+    assert "1 unmanaged" in result.output
+
+
+def test_status_reports_unreachable_broker():
+    class _DownBroker:
+        def scan(self):
+            raise RuntimeError("connection refused")
+
+        def call(self, method, params=None):
+            raise RuntimeError("connection refused")
+
+    ctx = AppContext(config_dir=_CONFIG_DIR, broker=_DownBroker())
+    result = runner.invoke(app, ["status"], obj=ctx)
+    assert result.exit_code == 0
+    assert "unreachable" in result.output.lower()
 
 
 def test_no_args_shows_help():

@@ -1,20 +1,26 @@
-"""CRUD access to repo definitions stored as ``<slug>.json`` files.
+"""CRUD access to repo definitions, fed by the broker's ``mono_config`` verbs.
 
-The directory *is* the registry: each file is one repo, named by its immutable
-slug. This is the first part of the data layer that **writes** config — the CLI
-and interactive UI author repo definitions through it.
+The registry *is* a directory of ``<slug>.json`` files on the host — but the
+container no longer mounts it. ``RepoStore`` keeps the brain (pydantic validation,
+list filtering, the retire/restore mutations, the conflict/not-found rules) and
+routes the raw JSON reads/writes through the broker (``get_repo_defs`` /
+``save_repo_def`` / ``purge_repo_def``). That split is deliberate: the security
+and identity checks stay container-side while the filesystem effect lives on the
+host.
 
 Deletion is two-tiered: ``retire`` soft-deletes (a tombstone flag; the slug stays
 reserved and the change is reversible via ``restore``), while ``purge`` is the
-guarded hard delete that physically removes the file.
+guarded hard delete that physically removes the file (broker-side).
 """
 
-from pathlib import Path
+from __future__ import annotations
+
+from typing import Any
 
 from pydantic import ValidationError
 
 from ..base_models import VersionError
-from ..paths import REPOS_SUBDIR
+from ..broker import BrokerProtocol
 from .errors import (
     AmbiguousNameError,
     ConfigConflictError,
@@ -22,57 +28,58 @@ from .errors import (
     ConfigValidationError,
     ConfigVersionError,
 )
-from .loader import _read_json
 from .models import Repo, slugify
 
 
 class RepoStore:
-    """Reads and writes repo definitions in a directory of ``<slug>.json`` files."""
+    """Reads and writes repo definitions through the broker's ``mono_config`` pack."""
 
-    def __init__(self, directory: Path) -> None:
-        self.directory = directory
+    def __init__(self, broker: BrokerProtocol) -> None:
+        self.broker = broker
 
-    @classmethod
-    def from_config_dir(cls, config_dir: Path) -> "RepoStore":
-        """Build a store rooted at ``<config_dir>/repos``."""
-        return cls(config_dir / REPOS_SUBDIR)
+    def _all_defs(self) -> dict[str, Any]:
+        """Every stored repo definition as raw JSON, keyed by slug."""
+        return self.broker.get_repo_defs().repos
 
-    def path_for(self, slug: str) -> Path:
-        return self.directory / f"{slug}.json"
+    def _def_for(self, slug: str) -> Any | None:
+        """One raw repo definition, or ``None`` if the slug is unknown."""
+        return self.broker.get_repo_defs([slug]).repos.get(slug)
 
     def exists(self, slug: str) -> bool:
-        return self.path_for(slug).is_file()
+        return self._def_for(slug) is not None
 
     def list(self, include_retired: bool = False) -> list[str]:
         """Return the slugs of stored repos, sorted."""
-        if not self.directory.is_dir():
-            return []
-        slugs = sorted(p.stem for p in self.directory.glob("*.json"))
+        slugs = sorted(self._all_defs())
         if include_retired:
             return slugs
         return [s for s in slugs if not self.load(s).retired]
 
-    def load(self, slug: str) -> Repo:
-        data = _read_json(self.path_for(slug))
+    def _validate(self, slug: str, data: Any) -> Repo:
+        """Validate one raw definition, mapping failures to config-typed errors."""
         try:
             repo = Repo.load(data)
         except VersionError as e:
             raise ConfigVersionError(str(e)) from e
         except ValidationError as e:
             raise ConfigValidationError(
-                f"{self.path_for(slug)} failed validation:\n{e}"
+                f"repo {slug!r} failed validation:\n{e}"
             ) from e
         if repo.slug != slug:
             raise ConfigValidationError(
-                f"{self.path_for(slug)} declares slug {repo.slug!r} "
-                f"but is filed as {slug!r}"
+                f"repo definition filed as {slug!r} declares slug {repo.slug!r}"
             )
         return repo
 
+    def load(self, slug: str) -> Repo:
+        data = self._def_for(slug)
+        if data is None:
+            raise ConfigNotFoundError(f"repo {slug!r} not found")
+        return self._validate(slug, data)
+
     def save(self, repo: Repo) -> None:
-        """Write (create or overwrite) a repo definition."""
-        self.directory.mkdir(parents=True, exist_ok=True)
-        self.path_for(repo.slug).write_text(repo.model_dump_json(indent=2) + "\n")
+        """Write (create or overwrite) a repo definition via the broker."""
+        self.broker.save_repo_def(repo.model_dump(mode="json"))
 
     def create(self, repo: Repo) -> None:
         """Save a new repo, refusing to overwrite an existing slug."""
@@ -96,10 +103,9 @@ class RepoStore:
 
     def purge(self, slug: str) -> None:
         """Hard delete: physically remove the definition file (guarded by callers)."""
-        try:
-            self.path_for(slug).unlink()
-        except FileNotFoundError as e:
-            raise ConfigNotFoundError(f"repo {slug!r} not found") from e
+        if not self.exists(slug):
+            raise ConfigNotFoundError(f"repo {slug!r} not found")
+        self.broker.purge_repo_def(slug)
 
 
 def resolve_repo(store: "RepoStore", query: str, *, slug_only: bool = False) -> Repo:

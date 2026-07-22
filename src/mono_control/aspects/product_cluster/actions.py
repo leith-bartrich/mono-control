@@ -16,7 +16,6 @@ from rich.console import Console
 
 from mono_control import paths, repo_ops
 from mono_control.config import Repo, RepoStore
-from mono_control.host_platform import profile as host_profile
 from mono_control.layout_target import (
     LayoutTarget,
     LayoutTargetAbsent,
@@ -28,7 +27,7 @@ from ..registry import discover_repos
 from .cluster_layout import (
     ClusterLayoutError,
     ClusterLayoutStore,
-    resolve_cluster_checkout,
+    require_cluster_present,
 )
 from .naming import default_subdir
 
@@ -48,10 +47,9 @@ def apply(target: LayoutTarget, *, store: RepoStore, console: Console) -> bool:
     """Run source → layout for ``target``, render both reports, return success."""
     source_report, layout_report = repo_ops.apply_target(
         target,
-        repo_store=store,
+        broker=store.broker,
         workspace_root=paths.REPOS_DIR,
         offline_root=paths.OFFLINE_DIR,
-        profile=host_profile(),
     )
     repo_ops.render_outcomes("source", source_report.outcomes, console=console)
     repo_ops.render_outcomes("layout", layout_report.outcomes, console=console)
@@ -66,7 +64,7 @@ def dirty_clusters(store: RepoStore) -> list[str]:
     exempt — their work rides to offline on retire and is restored on re-place. Each
     caller filters this to the clusters *it* would retire (see :func:`_gate`).
     """
-    inv = scan(paths.REPOS_DIR, paths.OFFLINE_DIR)
+    inv = scan(store.broker, paths.REPOS_DIR, paths.OFFLINE_DIR)
     return sorted(
         r.slug
         for r in discover_repos(store, ASPECT)
@@ -157,26 +155,21 @@ def relayout(
 
     # Ensure the cluster is present so its layout is readable; acquire only if absent
     # (no churn for the common already-present case).
-    if repo.slug not in scan(paths.REPOS_DIR, paths.OFFLINE_DIR).repos:
-        src = repo_ops.acquire(
-            {repo.slug},
-            repo_store=store,
-            workspace_root=paths.REPOS_DIR,
-            offline_root=paths.OFFLINE_DIR,
-            profile=host_profile(),
-        )
+    if repo.slug not in scan(store.broker, paths.REPOS_DIR, paths.OFFLINE_DIR).repos:
+        src = repo_ops.acquire({repo.slug}, broker=store.broker)
         repo_ops.render_outcomes("acquire", src.outcomes, console=console)
         if not src.ok:
             return False
 
     try:
-        checkout = resolve_cluster_checkout(
+        require_cluster_present(
+            store.broker,
             repo.slug,
             workspace_root=paths.REPOS_DIR,
             offline_root=paths.OFFLINE_DIR,
             require_materialized=False,
         )
-        layout = ClusterLayoutStore(checkout).load_or_empty()
+        layout = ClusterLayoutStore(store.broker, repo.slug).load_or_empty()
     except ClusterLayoutError as e:
         _err(console, e)
         return False
@@ -201,13 +194,7 @@ def swap(
     everything else) — gating all clusters, including this one, which swap *does* tear
     down — and ``relayout`` lays out the now-offline target with no two-cluster window.
     """
-    src = repo_ops.acquire(
-        {repo.slug},
-        repo_store=store,
-        workspace_root=paths.REPOS_DIR,
-        offline_root=paths.OFFLINE_DIR,
-        profile=host_profile(),
-    )
+    src = repo_ops.acquire({repo.slug}, broker=store.broker)
     repo_ops.render_outcomes("acquire", src.outcomes, console=console)
     if not src.ok:
         return False

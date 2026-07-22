@@ -1,16 +1,20 @@
-"""Canonical locations of the bind-mounted workspace directories.
+"""Canonical (nominal) workspace roots.
 
-These paths are where the dev container mounts the sibling repos (see
-.devcontainer/devcontainer.json). Centralized here so the CLI and the data
-layer agree on a single source of truth.
+Step 2 removed the container's bind mounts: git + filesystem effects run
+broker-side, and the container never touches these paths directly. They survive
+here as the **nominal roots** the wire's *relative* locations are reconstructed
+against (``scanner`` rehydration, ``plan`` target-location comparison) — a stable,
+process-internal coordinate space that must stay consistent between the scan
+converters and the planner, not real mount points. Centralized so the CLI and the
+data layer agree on a single source of truth.
 """
 
 from pathlib import Path
 
 WORKSPACES = Path("/workspaces")
-CONFIG_DIR = WORKSPACES / "mono-config"  # the config DIRECTORY mono-control reads
-REPOS_DIR = WORKSPACES / "mono-repos"  # where managed repos are placed (materialized)
-OFFLINE_DIR = WORKSPACES / "mono-repos-offline"  # holding area for unplaced checkouts
+CONFIG_DIR = WORKSPACES / "mono-config"  # default for --config-dir (display / gate)
+REPOS_DIR = WORKSPACES / "mono-repos"  # nominal materialized root (reconstruction)
+OFFLINE_DIR = WORKSPACES / "mono-repos-offline"  # nominal offline holding root
 
 # Provisional top-level file within CONFIG_DIR. The full directory layout (which
 # named files exist) is still being designed; the loader reads this for now.

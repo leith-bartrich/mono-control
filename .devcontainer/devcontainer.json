@@ -29,8 +29,10 @@
   // exposes `mono-control` on PATH via an EDITABLE install pointing at
   // /workspaces/mono-control — which in dev mode is the live bind mount — so a
   // second install would be both redundant and an unpinned resolve.
-  // This step builds the package and therefore relies on the
-  // MONO_CONTROL_IN_CONTAINER sentinel set on the service in docker-compose.yml.
+  // This step builds the package, whose in-tree build backend (_build/gate.py)
+  // requires the container marker file baked into the image
+  // (/etc/mono-control-container) — present here, absent on the host, so a host
+  // build fails fast.
   "postCreateCommand": "sudo chown -R codespace:codespace $HOME/.claude && uv sync --locked",
 
   "customizations": {

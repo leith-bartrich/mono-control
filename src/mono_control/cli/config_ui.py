@@ -8,11 +8,10 @@ Deliberately thin while ``WorkspaceConfig`` is just ``{"version": 1}`` — it
 mirrors ``repo_ui.py``'s shape so richer fields slot in as the model grows.
 """
 
-from pathlib import Path
-
 import questionary
 from rich.console import Console
 
+from mono_control.broker import BrokerProtocol
 from mono_control.config import ConfigError, WorkspaceConfig, load_config, save_config
 
 console = Console()
@@ -20,7 +19,7 @@ console = Console()
 _EXIT = "[exit config manager]"
 
 
-def manage(config_dir: Path) -> None:
+def manage(broker: BrokerProtocol) -> None:
     """Run the interactive workspace-config loop until the user exits."""
     while True:
         action = questionary.select(
@@ -30,26 +29,26 @@ def manage(config_dir: Path) -> None:
         if action in (None, _EXIT):
             return
         if action == "view":
-            _view(config_dir)
+            _view(broker)
         elif action == "validate":
-            _validate(config_dir)
+            _validate(broker)
         elif action == "save default":
-            save_config(WorkspaceConfig(version=1), config_dir)
+            save_config(WorkspaceConfig(version=1), broker)
             console.print("[green]saved[/green] default config")
 
 
-def _view(config_dir: Path) -> None:
+def _view(broker: BrokerProtocol) -> None:
     try:
-        config = load_config(config_dir)
+        config = load_config(broker)
     except ConfigError as e:
         console.print(f"[yellow](missing)[/yellow] {e}")
         return
     console.print(f"  version = {config.version}")
 
 
-def _validate(config_dir: Path) -> None:
+def _validate(broker: BrokerProtocol) -> None:
     try:
-        load_config(config_dir)
+        load_config(broker)
     except ConfigError as e:
         console.print(f"[red]invalid:[/red] {e}")
         return

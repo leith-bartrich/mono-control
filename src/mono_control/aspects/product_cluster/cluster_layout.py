@@ -13,17 +13,20 @@ workspace [slug]; the key set of ``members`` *is* the cluster's membership.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Literal
 
 from pydantic import ValidationError
 
 from mono_control.base_models import StrictModel, VersionedModel, VersionError
-from mono_control.on_disk import scan
+from mono_control.broker import BrokerProtocol
+from mono_control.on_disk import OnDiskRepo, scan
 
 # The aspect's content subdir inside a cluster checkout, and the layout filename.
-# ``default-`` leaves room for snapshot-derived / archived layouts later.
+# ``default-`` leaves room for snapshot-derived / archived layouts later. These
+# are now host-side constants the broker honors; the container names clusters by
+# slug and reads/writes their layout over the ``read_layout`` / ``write_layout``
+# verbs rather than touching the file.
 ASPECT_SUBDIR = "product-cluster"
 LAYOUT_FILENAME = "default-layout.json"
 
@@ -90,57 +93,56 @@ def load_cluster_layout(data: dict) -> ClusterLayout:
 
 
 # --------------------------------------------------------------------------- #
-# Store — reads/writes default-layout.json inside a cluster checkout
+# Store — reads/writes default-layout.json inside a cluster checkout, via broker
 # --------------------------------------------------------------------------- #
-def _read_json(path: Path) -> dict:
-    """Read and parse the layout JSON, wrapping failures as ClusterLayoutError."""
-    try:
-        raw = path.read_text()
-    except FileNotFoundError as e:
-        raise ClusterLayoutNotFoundError(f"layout file not found: {path}") from e
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise ClusterLayoutParseError(f"{path} is not valid JSON: {e}") from e
-
-
 class ClusterLayoutStore:
-    """Reads and writes a cluster's ``default-layout.json`` inside its checkout."""
+    """Reads and writes a cluster's ``default-layout.json`` over the broker.
 
-    def __init__(self, checkout: Path) -> None:
-        self.checkout = checkout
-        self.directory = checkout / ASPECT_SUBDIR
+    The document lives inside the (host-side) managed checkout, so the container
+    reaches it through the ``read_layout`` / ``write_layout`` verbs keyed by the
+    cluster's slug. Presence / materialization must be validated first (see
+    :func:`require_cluster_present`).
+    """
 
-    def path(self) -> Path:
-        return self.directory / LAYOUT_FILENAME
+    def __init__(self, broker: BrokerProtocol, cluster_slug: str) -> None:
+        self.broker = broker
+        self.cluster_slug = cluster_slug
 
     def exists(self) -> bool:
-        return self.path().is_file()
+        return self.broker.read_layout(self.cluster_slug).exists
 
     def load(self) -> ClusterLayout:
-        """Load and validate the layout file (raises ClusterLayoutError)."""
-        return load_cluster_layout(_read_json(self.path()))
+        """Load and validate the layout document (raises ClusterLayoutError)."""
+        result = self.broker.read_layout(self.cluster_slug)
+        if not result.exists or result.layout is None:
+            raise ClusterLayoutNotFoundError(
+                f"no layout authored for {self.cluster_slug!r}"
+            )
+        return load_cluster_layout(result.layout)
 
     def load_or_empty(self) -> ClusterLayout:
-        """Load the layout, or a fresh empty one if no file exists yet."""
-        if self.exists():
-            return self.load()
-        return ClusterLayout(version=1)
+        """Load the layout, or a fresh empty one if none is authored yet."""
+        result = self.broker.read_layout(self.cluster_slug)
+        if not result.exists or result.layout is None:
+            return ClusterLayout(version=1)
+        return load_cluster_layout(result.layout)
 
     def save(self, layout: ClusterLayout) -> None:
-        """Write the layout with the standard JSON conventions (indent + newline)."""
-        self.directory.mkdir(parents=True, exist_ok=True)
-        self.path().write_text(layout.model_dump_json(indent=2) + "\n")
+        """Write the layout document over the broker (JSON-native form)."""
+        self.broker.write_layout(
+            self.cluster_slug, layout.model_dump(mode="json")
+        )
 
 
-def resolve_cluster_checkout(
+def require_cluster_present(
+    broker: BrokerProtocol,
     slug: str,
     *,
     workspace_root: Path,
     offline_root: Path,
     require_materialized: bool = True,
-) -> Path:
-    """Return the absolute checkout path of a cluster, or raise.
+) -> OnDiskRepo:
+    """Return the cluster's observed checkout, or raise if it can't hold a layout.
 
     The layout lives *inside* the cluster, so the cluster must be on disk to read
     or write it. By default it must be **materialized** (the case for authoring
@@ -148,7 +150,7 @@ def resolve_cluster_checkout(
     **offline** checkout — used when a swap reads a freshly-acquired cluster's
     layout *before* placing it.
     """
-    observed = scan(workspace_root, offline_root).repos.get(slug)
+    observed = scan(broker, workspace_root, offline_root).repos.get(slug)
     if observed is None:
         raise ClusterLayoutNotFoundError(f"{slug!r} is not present locally")
     if require_materialized and observed.state != "materialized":
@@ -156,4 +158,4 @@ def resolve_cluster_checkout(
             f"{slug!r} is not materialized; place it first "
             f"(`mat moveto` or `conform swap`)"
         )
-    return observed.location
+    return observed

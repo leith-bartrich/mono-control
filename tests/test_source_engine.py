@@ -1,33 +1,23 @@
+"""Source engine as a broker client: derive refs, drive acquire, build outcomes.
+
+Effect-level cases (clone / init / fetch / verify) run against the real-effect
+shim; the container-logic cases (per-repo independence, outcome/resolved
+construction, the acquire calls made) run against canned fake responses.
+"""
+
 from pathlib import Path
 
-import pytest
-
+from broker_shim import GitRepo, ShimBroker, run_git
+from mono_control.broker import FakeBroker
 from mono_control.config import Repo, RepoStore
-from mono_control.engines.source import (
-    SourceRequest,
-    from_layout_target,
-    run,
-)
-from mono_control.git import GitRepo
-from mono_control.git.runner import run_git
-from mono_control.host_platform import FsProfile
+from mono_control.engines.source import SourceRequest, from_layout_target, run
 from mono_control.layout_target import (
     LayoutTarget,
     LayoutTargetAbsent,
+    LayoutTargetPresentAsIs,
     LayoutTargetPresentBranchHead,
     LayoutTargetPresentCommit,
 )
-from mono_control.on_disk import OnDiskInventory, scan
-
-PROFILE = FsProfile(filemode=True, symlinks=True, ignorecase=False)
-
-
-@pytest.fixture(autouse=True)
-def _git_identity(monkeypatch):
-    monkeypatch.setenv("GIT_AUTHOR_NAME", "Test")
-    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "test@example.com")
-    monkeypatch.setenv("GIT_COMMITTER_NAME", "Test")
-    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "test@example.com")
 
 
 def _origin(path: Path) -> str:
@@ -39,190 +29,141 @@ def _origin(path: Path) -> str:
     return run_git(["rev-parse", "HEAD"], cwd=path)
 
 
-def _commit_more(path: Path, name: str) -> str:
-    (path / name).write_text(name + "\n")
-    run_git(["add", "."], cwd=path)
-    run_git(["commit", "-m", name], cwd=path)
-    return run_git(["rev-parse", "HEAD"], cwd=path)
+def _env(tmp_path):
+    broker = ShimBroker(tmp_path / "config", tmp_path / "ws", tmp_path / "off")
+    return broker, RepoStore(broker)
 
 
-def _store_with(tmp_path: Path, *repos: Repo) -> RepoStore:
-    store = RepoStore(tmp_path / "config" / "repos")
-    for r in repos:
-        store.create(r)
-    return store
-
-
+# --------------------------------------------------------------------------- #
+# Effect-level (shim)
+# --------------------------------------------------------------------------- #
 def test_clone_absent_with_source(tmp_path):
     origin = tmp_path / "origin"
     head = _origin(origin)
-    store = _store_with(
-        tmp_path,
-        Repo(version=1, slug="alpha", name="Alpha", sources={"origin": str(origin)}),
-    )
+    broker, store = _env(tmp_path)
+    store.create(Repo(version=1, slug="alpha", name="Alpha", sources={"origin": str(origin)}))
 
-    offline = tmp_path / "offline"
-    report = run(
-        SourceRequest(refs_by_slug={"alpha": {"HEAD"}}),
-        repo_store=store,
-        inventory=OnDiskInventory(),
-        offline_root=offline,
-        profile=PROFILE,
-    )
-
+    report = run(SourceRequest(refs_by_slug={"alpha": {"HEAD"}}), broker=broker)
     assert report.ok
     assert report.outcomes[0].status == "cloned"
-    cloned = GitRepo(offline / "alpha")
+    cloned = GitRepo(tmp_path / "off" / "alpha")
     assert cloned.slug() == "alpha"
     assert cloned.current_commit() == head
 
 
 def test_init_absent_without_source(tmp_path):
-    store = _store_with(tmp_path, Repo(version=1, slug="fresh", name="Fresh"))
-    offline = tmp_path / "offline"
-
-    report = run(
-        SourceRequest(refs_by_slug={"fresh": set()}),
-        repo_store=store,
-        inventory=OnDiskInventory(),
-        offline_root=offline,
-        profile=PROFILE,
-    )
-
+    broker, store = _env(tmp_path)
+    store.create(Repo(version=1, slug="fresh", name="Fresh"))
+    report = run(SourceRequest(refs_by_slug={"fresh": set()}), broker=broker)
     assert report.ok
     assert report.outcomes[0].status == "initialized"
-    assert GitRepo(offline / "fresh").slug() == "fresh"
+    assert GitRepo(tmp_path / "off" / "fresh").slug() == "fresh"
 
 
 def test_init_absent_honors_initial_branch(tmp_path):
-    store = _store_with(tmp_path, Repo(version=1, slug="fresh", name="Fresh"))
-    offline = tmp_path / "offline"
-
+    broker, store = _env(tmp_path)
+    store.create(Repo(version=1, slug="fresh", name="Fresh"))
     report = run(
         SourceRequest(refs_by_slug={"fresh": set()}, initial_branch="develop"),
-        repo_store=store,
-        inventory=OnDiskInventory(),
-        offline_root=offline,
-        profile=PROFILE,
+        broker=broker,
     )
-
-    assert report.ok
     assert report.outcomes[0].status == "initialized"
-    head = run_git(["symbolic-ref", "HEAD"], cwd=offline / "fresh").strip()
+    head = run_git(["symbolic-ref", "HEAD"], cwd=tmp_path / "off" / "fresh").strip()
     assert head == "refs/heads/develop"
 
 
 def test_source_missing_when_refs_requested(tmp_path):
-    store = _store_with(tmp_path, Repo(version=1, slug="nope", name="Nope"))
-    offline = tmp_path / "offline"
-
+    broker, store = _env(tmp_path)
+    store.create(Repo(version=1, slug="nope", name="Nope"))
     report = run(
-        SourceRequest(refs_by_slug={"nope": {"refs/heads/main"}}),
-        repo_store=store,
-        inventory=OnDiskInventory(),
-        offline_root=offline,
-        profile=PROFILE,
+        SourceRequest(refs_by_slug={"nope": {"refs/heads/main"}}), broker=broker
     )
-
     assert not report.ok
     outcome = report.outcomes[0]
     assert outcome.status == "source-missing"
     assert "refs/heads/main" in outcome.unresolved_refs
-    assert not (offline / "nope").exists()
+    assert not (tmp_path / "off" / "nope").exists()
 
 
 def test_fetch_present_brings_new_commit(tmp_path):
     origin = tmp_path / "origin"
     _origin(origin)
-    store = _store_with(
-        tmp_path,
-        Repo(version=1, slug="beta", name="Beta", sources={"origin": str(origin)}),
-    )
+    broker, store = _env(tmp_path)
+    store.create(Repo(version=1, slug="beta", name="Beta", sources={"origin": str(origin)}))
+    run(SourceRequest(refs_by_slug={"beta": set()}), broker=broker)  # clone
 
-    offline = tmp_path / "offline"
-    # First run: clone.
-    run(
-        SourceRequest(refs_by_slug={"beta": set()}),
-        repo_store=store,
-        inventory=OnDiskInventory(),
-        offline_root=offline,
-        profile=PROFILE,
-    )
-    # Upstream advances; second run with that ref should bring it in.
-    new_commit = _commit_more(origin, "second.txt")
-    inv = scan(tmp_path / "ws", offline)
-    report = run(
-        SourceRequest(refs_by_slug={"beta": {new_commit}}),
-        repo_store=store,
-        inventory=inv,
-        offline_root=offline,
-        profile=PROFILE,
-    )
+    (origin / "second.txt").write_text("second\n")
+    run_git(["add", "."], cwd=origin)
+    run_git(["commit", "-m", "second"], cwd=origin)
+    new_commit = run_git(["rev-parse", "HEAD"], cwd=origin)
 
+    report = run(SourceRequest(refs_by_slug={"beta": {new_commit}}), broker=broker)
     assert report.ok
     assert report.outcomes[0].status == "fetched"
-    assert GitRepo(offline / "beta").resolve_ref(new_commit) == new_commit
-
-
-def test_per_repo_independence_one_failure_others_succeed(tmp_path):
-    good_origin = tmp_path / "good"
-    _origin(good_origin)
-    bad_url = str(tmp_path / "does-not-exist")
-    store = _store_with(
-        tmp_path,
-        Repo(version=1, slug="good", name="Good", sources={"origin": str(good_origin)}),
-        Repo(version=1, slug="bad", name="Bad", sources={"origin": bad_url}),
-    )
-
-    offline = tmp_path / "offline"
-    report = run(
-        SourceRequest(refs_by_slug={"good": set(), "bad": set()}),
-        repo_store=store,
-        inventory=OnDiskInventory(),
-        offline_root=offline,
-        profile=PROFILE,
-    )
-
-    by_slug = {o.slug: o for o in report.outcomes}
-    assert by_slug["good"].status == "cloned"
-    assert by_slug["bad"].status == "create-failed"
-    assert not report.ok
+    assert GitRepo(tmp_path / "off" / "beta").resolve_ref(new_commit) == new_commit
 
 
 def test_definition_missing(tmp_path):
-    store = _store_with(tmp_path)
-    report = run(
-        SourceRequest(refs_by_slug={"ghost": set()}),
-        repo_store=store,
-        inventory=OnDiskInventory(),
-        offline_root=tmp_path / "offline",
-        profile=PROFILE,
-    )
+    broker, _ = _env(tmp_path)
+    report = run(SourceRequest(refs_by_slug={"ghost": set()}), broker=broker)
     assert report.outcomes[0].status == "definition-missing"
 
 
 def test_ref_missing_after_clone(tmp_path):
     origin = tmp_path / "origin"
     _origin(origin)
-    store = _store_with(
-        tmp_path,
-        Repo(version=1, slug="alpha", name="Alpha", sources={"origin": str(origin)}),
-    )
+    broker, store = _env(tmp_path)
+    store.create(Repo(version=1, slug="alpha", name="Alpha", sources={"origin": str(origin)}))
     report = run(
         SourceRequest(refs_by_slug={"alpha": {"refs/heads/does-not-exist"}}),
-        repo_store=store,
-        inventory=OnDiskInventory(),
-        offline_root=tmp_path / "offline",
-        profile=PROFILE,
+        broker=broker,
     )
     outcome = report.outcomes[0]
     assert outcome.status == "ref-missing"
     assert "refs/heads/does-not-exist" in outcome.unresolved_refs
 
 
-def test_from_layout_target_derives_refs():
-    from mono_control.layout_target import LayoutTargetPresentAsIs
+# --------------------------------------------------------------------------- #
+# Container logic (canned fake)
+# --------------------------------------------------------------------------- #
+def test_per_repo_independence_and_acquire_calls():
+    """One slug's failure does not abort the rest; each yields one acquire call."""
+    fake = FakeBroker(
+        results={
+            "acquire": {
+                "status": "create-failed",
+                "summary": "boom",
+                "unresolved_refs": [],
+                "resolved": {},
+            }
+        }
+    )
+    report = run(
+        SourceRequest(refs_by_slug={"good": set(), "bad": set()}), broker=fake
+    )
+    assert not report.ok
+    assert {o.status for o in report.outcomes} == {"create-failed"}
+    # one acquire call per requested slug
+    assert [m for m, _ in fake.calls] == ["acquire", "acquire"]
+    assert {p["slug"] for _, p in fake.calls} == {"good", "bad"}
 
+
+def test_resolved_map_is_carried_onto_outcome():
+    fake = FakeBroker(
+        results={
+            "acquire": {
+                "status": "fetched",
+                "summary": "ok",
+                "unresolved_refs": [],
+                "resolved": {"refs/heads/main": "c0ffee"},
+            }
+        }
+    )
+    report = run(SourceRequest(refs_by_slug={"beta": {"refs/heads/main"}}), broker=fake)
+    assert report.outcomes[0].resolved == {"refs/heads/main": "c0ffee"}
+
+
+def test_from_layout_target_derives_refs():
     target = LayoutTarget(
         targets={
             "alpha": LayoutTargetPresentCommit(commit="a" * 40, location="alpha"),
@@ -235,5 +176,5 @@ def test_from_layout_target_derives_refs():
     assert req.refs_by_slug == {
         "alpha": {"a" * 40},
         "beta": {"refs/heads/main"},
-        "delta": set(),  # present-as-is → empty ref set (acquire if absent, no verify)
+        "delta": set(),
     }

@@ -16,6 +16,7 @@ from rich.console import Console
 from rich.table import Table
 
 from mono_control import paths, repo_ops
+from mono_control.app_context import AppContext
 from mono_control.config import (
     AmbiguousNameError,
     ConfigConflictError,
@@ -25,7 +26,6 @@ from mono_control.config import (
     make_slug,
     resolve_repo,
 )
-from mono_control.host_platform import profile as host_profile
 from mono_control.layout_target import (
     LayoutTarget,
     LayoutTargetAbsent,
@@ -50,8 +50,12 @@ repo_app.add_typer(branch_app, name="branch")
 repo_app.add_typer(fork_app, name="fork")
 
 
+def _app(ctx: typer.Context) -> AppContext:
+    return ctx.obj
+
+
 def _store(ctx: typer.Context) -> RepoStore:
-    return RepoStore.from_config_dir(ctx.obj)
+    return RepoStore(_app(ctx).broker)
 
 
 def _fail(message: object) -> None:
@@ -295,8 +299,7 @@ def fork_add(
             purpose=purpose,
             dev_branch=dev,
             repo_store=_store(ctx),
-            workspace_root=paths.REPOS_DIR,
-            offline_root=paths.OFFLINE_DIR,
+            broker=_app(ctx).broker,
         )
     except (ConfigError, ValueError) as e:
         _fail(e)
@@ -404,9 +407,7 @@ def init_cmd(
             branches={"dev": initial_branch} if initial_branch else None,
             initial_branch=initial_branch,
             repo_store=store,
-            workspace_root=paths.REPOS_DIR,
-            offline_root=paths.OFFLINE_DIR,
-            profile=host_profile(),
+            broker=_app(ctx).broker,
         )
     except (ConfigConflictError, ConfigError) as e:
         _fail(e)
@@ -431,10 +432,9 @@ def _apply_and_exit(ctx: typer.Context, target: LayoutTarget) -> None:
     """Run apply_target with the standard render-and-exit-on-failure pattern."""
     source_report, layout_report = repo_ops.apply_target(
         target,
-        repo_store=_store(ctx),
+        broker=_app(ctx).broker,
         workspace_root=paths.REPOS_DIR,
         offline_root=paths.OFFLINE_DIR,
-        profile=host_profile(),
     )
     repo_ops.render_outcomes("source", source_report.outcomes, console=console)
     repo_ops.render_outcomes("layout", layout_report.outcomes, console=console)
@@ -442,13 +442,13 @@ def _apply_and_exit(ctx: typer.Context, target: LayoutTarget) -> None:
         raise typer.Exit(code=1)
 
 
-def _observed_materialized_location(repo: Repo) -> str:
+def _observed_materialized_location(ctx: typer.Context, repo: Repo) -> str:
     """Return ``repo``'s currently materialized subdir (relative to REPOS_DIR).
 
     Errors out if the repo isn't materialized — the user should ``moveto``
     first (or use ``layout-target`` to combine placement and ref intent).
     """
-    inv = scan(paths.REPOS_DIR, paths.OFFLINE_DIR)
+    inv = scan(_app(ctx).broker, paths.REPOS_DIR, paths.OFFLINE_DIR)
     observed = inv.repos.get(repo.slug)
     if observed is None:
         _fail(
@@ -510,7 +510,7 @@ def mat_branchat(
 ) -> None:
     """Check out a branch's head at the repo's current location."""
     repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
-    location = _observed_materialized_location(repo)
+    location = _observed_materialized_location(ctx, repo)
     target = LayoutTarget(
         targets={
             repo.slug: LayoutTargetPresentBranchHead(branch=branch, location=location),
@@ -530,7 +530,7 @@ def mat_commit(
 ) -> None:
     """Check out a specific commit (detached HEAD) at the repo's current location."""
     repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
-    location = _observed_materialized_location(repo)
+    location = _observed_materialized_location(ctx, repo)
     target = LayoutTarget(
         targets={
             repo.slug: LayoutTargetPresentCommit(commit=commit, location=location),

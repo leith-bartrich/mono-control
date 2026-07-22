@@ -8,10 +8,8 @@ the unit tests exercise.
 import questionary
 from rich.console import Console
 
-from mono_control import paths, repo_ops
+from mono_control import repo_ops
 from mono_control.config import ConfigError, Repo, RepoStore, make_slug, source_names
-from mono_control.git import GitError, remote_default_branch
-from mono_control.host_platform import profile as host_profile
 
 console = Console()
 
@@ -72,9 +70,7 @@ def _add_new(store: RepoStore, name: str, slug: str) -> None:
         branches={"dev": dev},
         initial_branch=dev,
         repo_store=store,
-        workspace_root=paths.REPOS_DIR,
-        offline_root=paths.OFFLINE_DIR,
-        profile=host_profile(),
+        broker=store.broker,
     )
     console.print(f"[green]created[/green] {resolved_slug} (dev = {dev})")
     repo_ops.render_outcomes(f"init {resolved_slug}", report.outcomes, console=console)
@@ -103,17 +99,22 @@ def _add_existing(store: RepoStore, name: str, slug: str) -> None:
             if fork_url:
                 sources["fork-ours"] = fork_url
 
-    dev = _prompt_dev_from_remote(url)
+    dev = _prompt_dev_from_remote(store, url)
     branches = {"dev": dev} if dev else {}
     store.create(Repo(version=1, slug=slug, name=name, sources=sources, branches=branches))
     console.print(f"[green]created[/green] {slug}")
 
 
-def _prompt_dev_from_remote(url: str) -> str | None:
-    """Probe the remote's default branch and offer it for `dev`; else ask (blank skips)."""
+def _prompt_dev_from_remote(store: RepoStore, url: str) -> str | None:
+    """Probe the remote's default branch and offer it for `dev`; else ask (blank skips).
+
+    The probe is a git effect, so it runs broker-side (``remote_default_branch``);
+    the container just authors the URL and asks the broker to resolve its symbolic
+    HEAD. A broker/transport failure degrades to the plain prompt.
+    """
     try:
-        default = remote_default_branch(url)
-    except GitError:
+        default = store.broker.remote_default_branch(url)
+    except Exception:
         console.print("[yellow](couldn't read the remote; specify the dev branch)[/yellow]")
         default = None
     if default and questionary.confirm(
@@ -188,7 +189,7 @@ def _add_fork(store: RepoStore, repo: Repo) -> None:
     url = (questionary.text("fork URL:").ask() or "").strip()
     if not url:
         return
-    dev_branch = _prompt_fork_dev(repo, url) if purpose == "ours" else None
+    dev_branch = _prompt_fork_dev(store, repo, url) if purpose == "ours" else None
     try:
         result = repo_ops.adopt_fork(
             repo.slug,
@@ -196,8 +197,7 @@ def _add_fork(store: RepoStore, repo: Repo) -> None:
             purpose=purpose,
             dev_branch=dev_branch,
             repo_store=store,
-            workspace_root=paths.REPOS_DIR,
-            offline_root=paths.OFFLINE_DIR,
+            broker=store.broker,
         )
     except (ConfigError, ValueError, RuntimeError) as e:
         console.print(f"[red]error:[/red] {e}")
@@ -225,12 +225,16 @@ def _add_fork(store: RepoStore, repo: Repo) -> None:
         )
 
 
-def _prompt_fork_dev(repo: Repo, url: str) -> str | None:
-    """Probe the fork's default branch and offer a dev repoint; ``None`` keeps dev."""
+def _prompt_fork_dev(store: RepoStore, repo: Repo, url: str) -> str | None:
+    """Probe the fork's default branch and offer a dev repoint; ``None`` keeps dev.
+
+    The probe is a git effect, so it runs broker-side (``remote_default_branch``);
+    a broker/transport failure degrades to the plain prompt.
+    """
     current = repo.branches.get(source_names.DEV)
     try:
-        default = remote_default_branch(url)
-    except GitError:
+        default = store.broker.remote_default_branch(url)
+    except Exception:
         console.print("[yellow](couldn't read the fork; specify its dev branch)[/yellow]")
         default = None
     if default is not None:

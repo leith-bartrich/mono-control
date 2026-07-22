@@ -1,6 +1,7 @@
 import typer
 from typer.testing import CliRunner
 
+from broker_shim import ShimBroker
 from mono_control.aspects import (
     REGISTERED_ASPECTS,
     attach_aspect_commands,
@@ -8,6 +9,10 @@ from mono_control.aspects import (
     register,
 )
 from mono_control.config import Repo, RepoStore
+
+
+def _store(tmp_path) -> RepoStore:
+    return RepoStore(ShimBroker(tmp_path / "config", tmp_path / "ws", tmp_path / "off"))
 
 
 def _snapshot_registry() -> list:
@@ -51,7 +56,7 @@ def test_attach_is_a_noop_when_no_aspects_registered():
 
 
 def test_discover_repos_filters_by_aspect(tmp_path):
-    store = RepoStore(tmp_path / "repos")
+    store = _store(tmp_path)
     store.create(Repo(version=1, slug="a", name="A", aspects={"product-cluster"}))
     store.create(Repo(version=1, slug="b", name="B"))  # no aspects
     store.create(
@@ -64,7 +69,7 @@ def test_discover_repos_filters_by_aspect(tmp_path):
 
 
 def test_discover_repos_excludes_retired_by_default(tmp_path):
-    store = RepoStore(tmp_path / "repos")
+    store = _store(tmp_path)
     store.create(Repo(version=1, slug="live", name="L", aspects={"x"}))
     store.create(Repo(version=1, slug="gone", name="G", aspects={"x"}))
     store.retire("gone")

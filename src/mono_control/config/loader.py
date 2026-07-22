@@ -1,76 +1,52 @@
-"""Load, validate, and save the mono-config directory's workspace config.
+"""Load, validate, and save the workspace ``system.json``, via the broker.
 
-Directory-oriented: ``load_config`` takes the config *directory*. Today it reads
-a single provisional ``system.json``; the marked seam below is where additional
-named files get merged in once the directory layout is designed. ``save_config``
-is its write-side counterpart — the workspace config is a singleton file, so a
-function pair fits it (unlike the per-slug ``RepoStore`` collection).
+The workspace config is a singleton document the container used to read from a
+bind mount; it now travels over the ``mono_config`` verb-pack (``get_system`` /
+``save_system``). ``load_config`` validates the raw JSON into a
+``WorkspaceConfig``; ``save_config`` is its write-side counterpart. The marked
+seam below is where additional named documents get merged in once the config
+directory layout is designed.
 """
 
-import json
-from pathlib import Path
+from __future__ import annotations
+
 from typing import Any
 
 from pydantic import ValidationError
 
 from ..base_models import VersionError
-from ..paths import CONFIG_DIR, SYSTEM_FILE
+from ..broker import BrokerProtocol
 from .errors import (
     ConfigNotFoundError,
-    ConfigParseError,
     ConfigValidationError,
     ConfigVersionError,
 )
 from .models import WorkspaceConfig
 
 
-def _read_json(path: Path) -> Any:
-    """Read and parse one JSON file, wrapping failures as ConfigError.
+def load_config(broker: BrokerProtocol) -> WorkspaceConfig:
+    """Load the workspace config into a validated ``WorkspaceConfig``.
 
-    Shared by every config file so the not-found / parse-error handling is
-    consistent as more named files are added.
+    Reads ``system.json`` over the broker. Raises ``ConfigNotFoundError`` if it
+    does not exist, mirroring the old missing-file behavior.
     """
-    try:
-        raw = path.read_text()
-    except FileNotFoundError as e:
-        raise ConfigNotFoundError(f"Config file not found: {path}") from e
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise ConfigParseError(f"{path} is not valid JSON: {e}") from e
-
-
-def load_config(config_dir: Path | None = None) -> WorkspaceConfig:
-    """Load the config directory into a validated WorkspaceConfig.
-
-    ``config_dir`` defaults to the bind-mounted CONFIG_DIR; pass an explicit
-    path to load an arbitrary directory (used in tests).
-    """
-    config_dir = config_dir or CONFIG_DIR
-    if not config_dir.is_dir():
-        raise ConfigNotFoundError(f"Config directory not found: {config_dir}")
-
-    data = _read_json(config_dir / SYSTEM_FILE)
-    # FUTURE: merge additional named files from config_dir here.
-
+    data: Any = broker.get_system().system
+    if data is None:
+        raise ConfigNotFoundError("Config file not found: system.json")
+    # FUTURE: merge additional named documents here.
     try:
         return WorkspaceConfig.load(data)
     except VersionError as e:
         raise ConfigVersionError(str(e)) from e
     except ValidationError as e:
-        raise ConfigValidationError(
-            f"{config_dir / SYSTEM_FILE} failed validation:\n{e}"
-        ) from e
+        raise ConfigValidationError(f"system.json failed validation:\n{e}") from e
 
 
-def save_config(config: WorkspaceConfig, config_dir: Path | None = None) -> None:
-    """Write ``config`` to ``system.json`` in the config directory.
+def save_config(config: WorkspaceConfig, broker: BrokerProtocol) -> None:
+    """Write ``config`` to ``system.json`` over the broker."""
+    broker.save_system(config.model_dump(mode="json"))
 
-    The write-side counterpart to ``load_config``, modeled on ``RepoStore.save``:
-    creates the directory if needed and serializes the model to indented JSON
-    with a trailing newline. ``config_dir`` defaults to the bind-mounted
-    CONFIG_DIR; pass an explicit path in tests.
-    """
-    config_dir = config_dir or CONFIG_DIR
-    config_dir.mkdir(parents=True, exist_ok=True)
-    (config_dir / SYSTEM_FILE).write_text(config.model_dump_json(indent=2) + "\n")
+
+def system_exists(broker: BrokerProtocol) -> bool:
+    """True when ``system.json`` already exists (for create-refuses-overwrite)."""
+    return broker.get_system().system is not None
