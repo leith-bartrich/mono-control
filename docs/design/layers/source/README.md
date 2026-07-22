@@ -2,10 +2,11 @@
 
 The **source engine** brings repos into **local availability** so the
 [layout engine](../layout/README.md) has something to arrange. It is the only engine
-that **creates** a checkout — `absent → offline` by **clone** (from a remote source)
-or **init** (a brand-new repo with no remote yet) — and the only one that touches the
-**network** (clone/fetch, operating a repo's named [sources](../data/repo.md)).
-Created checkouts always land in `mono-repos-offline/<slug>`.
+that **creates** a repo — `absent → offline` by **clone `--bare`** (from a remote
+source) or **init `--bare`** (a brand-new repo with no remote yet) — and the only one
+that touches the **network** (clone/fetch, operating a repo's named
+[sources](../data/repo.md)). Created bare repos always land in
+`mono-repos-bare/<slug>` (offline: a bare repo with no worktree).
 
 ## Input: a source request (not a target)
 
@@ -31,9 +32,11 @@ Additively and idempotently — re-running is always safe:
    default branch unless overridden). For now `dev` is the **only** ref the engine
    resolves; **failing to resolve or check out `dev` is an error**, never a silent
    fallback.
-2. **absent locally → create** into `mono-repos-offline/<slug>` — **clone** the source
-   with its working tree **on `dev`**, or **init** a brand-new repo with no remote (where
-   the stamps are applied — see below).
+2. **absent locally → create** into `mono-repos-bare/<slug>` — **clone `--bare`** the
+   source with its default set to **`dev`**, or **init `--bare`** a brand-new repo with
+   no remote (where the stamps are applied — see below). No worktree exists yet; the
+   [layout engine](../layout/README.md)'s `worktree add` produces the `dev` checkout at
+   placement.
 3. **already present** (offline or materialized) → **fetch** from the source to
    refresh the requested refs.
 4. **Verify** the requested refs now exist; a missing source or ref fails *that
@@ -53,8 +56,8 @@ for the layout engine.
 - Publishing local work is a **developer / CI** concern, done with their own git, not
   a workspace-state operation. A state manager pushing on your behalf would be
   surprising and risky.
-- The offline folder already removes the only internal reason to push (saving work
-  before removal — see the layout engine's non-destructive retire).
+- The bare repo already removes the only internal reason to push (unpushed commits
+  survive removal in the bare repo — see the layout engine's non-destructive retire).
 
 Pushing state out is the [publish engine](../publish/README.md)'s reserved territory
 — a separate, explicit operation, never part of acquisition. Keeping this engine
@@ -63,9 +66,9 @@ one-directional avoids the sprawl of a bidirectional sync.
 ## Stamping lives here
 
 Because **clone** (and init) is the source engine's job, two stamps into the new
-checkout's `.git/config` are applied *here*, not by the
-[layout engine](../layout/README.md) (which only moves/checks-out already-stamped
-checkouts):
+bare repo's config are applied *here*, not by the
+[layout engine](../layout/README.md) (which only adds/removes/checks-out worktrees
+off already-stamped bare repos):
 
 - the host filesystem **FS-capability profile** (see
   [host-platform](../../host-platform.md)), so later git behaves consistently; and
@@ -86,9 +89,10 @@ the ref is always [`dev`](../data/repo.md#branches) (above). (The current implem
 resolves the **first-declared** source entry; the [fork transition](../data/repo.md#sources)
 deliberately appends `fork-ours` *after* the canonical so acquisition is unchanged, and
 conforming a checkout's declared named remotes into `.git/config` — beyond the eager
-stamp done at transition time — is engine work, TBD.) Leaving every checkout **on
-`dev`** hands the [layout engine](../layout/README.md) a clean, correctly-reffed checkout
-to simply *place* — placement-only. More opinionated ref work (advancing to a pinned
+stamp done at transition time — is engine work, TBD.) Leaving every bare repo
+defaulted **to `dev`** hands the [layout engine](../layout/README.md) a clean,
+correctly-reffed repo to simply *place* (its `worktree add` checks out `dev`) —
+placement-only. More opinionated ref work (advancing to a pinned
 commit, pulls) is a **later layer that runs after the layout engine**, not part of
 acquisition. Fetch policy remains **TBD**. Acquisition is a broker effect: the clone
 / fetch runs host-side, so it uses the host's own git credentials and no token ever

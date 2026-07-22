@@ -33,7 +33,7 @@ A layout-target has two parts:
   - **absent** — the repo should not be materialized.
 
   Each *present* kind names a desired **location** (a subdir under
-  `mono-repos`, defaultable by convention/aspect). Placement and ref intent
+  `mono-work`, defaultable by convention/aspect). Placement and ref intent
   are *orthogonal* axes; `present-as-is` expresses one (placement),
   `commit`/`branch-head` express both. The CLI's intent verbs
   (`mat moveto` / `mat branchat` / `mat commit` / `mat layout-target`)

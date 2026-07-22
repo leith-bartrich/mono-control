@@ -33,11 +33,13 @@ Reset the **whole workspace** — member repos *and* product clusters — to emp
 the exclusive target `LayoutTarget(pre_clear=True, targets={})`: every materialized repo
 reconciles to absent.
 
-Retire is *inherently* [non-destructive](../../layout/README.md): it **moves** a checkout to
-`mono-repos-offline/`, so even uncommitted work rides along and is restored on re-place —
-there is nothing for the engine to refuse, and no `--force`. The one guard is the
-[dirty-cluster gate](#the-dirty-cluster-gate): `clear` is refused if any materialized
-product cluster has uncommitted changes.
+Retire is [non-destructive of committed work](../../layout/README.md): it **removes the
+worktree** (`git worktree remove`), leaving the bare repo — and every commit in it — under
+`mono-repos-bare/`, so re-placing later restores the committed history intact. Uncommitted
+worktree edits are the exception: the layout engine's retire is **dirty-gated** and refuses
+a dirty worktree rather than discarding it. On top of that leaf guard, `clear` adds the
+[dirty-cluster gate](#the-dirty-cluster-gate): it is refused if any materialized product
+cluster has uncommitted changes.
 
 ### conform swap \<pc>
 
@@ -88,16 +90,17 @@ retire has uncommitted changes**.
 A product cluster is a non-opaque *data* repo whose **committed** state is the
 reproducibility anchor — the layout you're in is only durably reproducible if the cluster is
 committed. Tearing it down dirty would pin the current state to nothing but an uncommitted
-working tree in offline. Member repos are **exempt**: their work is preserved by the move to
-offline and restored on re-place, so a dirty member clears fine. Commit (or stash) the
-cluster first. (The gate lives in the aspect, not the layout engine — retire is always safe
-for the engine; only the aspect knows a repo is a reproducibility-bearing cluster.)
+working tree. Member repos are treated differently: their **committed** work lives in the
+bare repo and is restored on re-place, so retiring a *clean* member is always safe; a member
+with uncommitted edits is caught by the layout engine's own leaf-level dirty gate, not this
+aspect gate. Commit (or stash) the cluster first. (This gate lives in the aspect, not the
+layout engine — only the aspect knows a repo is a reproducibility-bearing cluster.)
 
-Because the gate guards *reproducibility*, not data — the work is safe in offline either way
-— it has an **escape hatch**: `--allow-dirty` on the CLI proceeds regardless, and the
-interactive manager prompts *"cluster X is dirty — proceed anyway?"* when it would trip.
-Overriding just accepts "this teardown isn't reproducibly pinned"; there's no
-retype-to-confirm ceremony, because nothing is lost.
+Because the gate guards *reproducibility* specifically — the cluster's committed history is
+safe in the bare repo regardless — it has an **escape hatch**: `--allow-dirty` on the CLI
+proceeds regardless (accepting that the cluster's uncommitted, unreproducible edits are
+discarded), and the interactive manager prompts *"cluster X is dirty — proceed anyway?"*
+when it would trip. Overriding just accepts "this teardown isn't reproducibly pinned."
 
 ## The implied cluster
 

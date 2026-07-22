@@ -12,7 +12,7 @@ And note this source holds only the *configuration* abstractions
 ## Source of truth: the mono-config repo
 
 The configuration data source is `mono-config`, a separate git repository that
-sits alongside `mono-control` and `mono-repos`. `mono-config` is purely data —
+sits alongside `mono-control` and `mono-work`. `mono-config` is purely data —
 it holds configuration and nothing else (no build logic, no knowledge of what
 the managed repos contain).
 

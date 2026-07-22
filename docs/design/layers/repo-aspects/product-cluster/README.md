@@ -20,7 +20,7 @@ way. That content grows over time; the **first and load-bearing piece is the
 cluster's layout**:
 
 - **[Layout](layout.md)** — the cluster's single, authored arrangement: which repo
-  [slugs](../../data/repo.md) are members, *where* each sits under `mono-repos/`, and
+  [slugs](../../data/repo.md) are members, *where* each sits under `mono-work/`, and
   each member's **role** (`dev` vs `dep`). Persisted as
   `product-cluster/default-layout.json` (`default-` because a
   [snapshot](../../data/snapshot.md), which also carries a location per entry, is
@@ -45,7 +45,7 @@ after it is checked out.
 A product cluster materializes, **by default**, under a products subdirectory:
 
 ```text
-mono-repos/products/<name>
+mono-work/products/<name>
 ```
 
 This is a *default convenience location, not a contract* — nothing guarantees a
@@ -59,8 +59,9 @@ rule — and whether slugs carry a uniqueness suffix at all — is **TBD**.
 
 Materialization is two engine steps, not a single clone: the
 [source engine](../../source/README.md) **acquires** the cluster into offline (clone or
-init, stamped), then the [layout engine](../../layout/README.md) **places** it at that
-subdir. (The [git layer](../../git/README.md) provides the primitives.)
+init `--bare`, stamped), then the [layout engine](../../layout/README.md) **places** it
+at that subdir (`worktree add`). (The [git layer](../../git/README.md) provides the
+primitives.)
 
 ## The manager
 
@@ -81,7 +82,7 @@ shared logic layer (`actions.py`), so they cannot drift.
 - **mat** — a sub-group of intent verbs that drive the source +
   [layout](../../layout/README.md) engines:
   - `mat moveto <name> [<subdir>]` — place at
-    `mono-repos/products/<subdir>` (defaults to the slugified repo name);
+    `mono-work/products/<subdir>` (defaults to the slugified repo name);
     placement only, no ref change.
   - `mat branchat <name> <branch>` — check out a branch's HEAD at the
     cluster's current location.

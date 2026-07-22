@@ -10,10 +10,11 @@ is **where each lives**.
   reads (and authors in part). Mechanism: [config-source.md](config-source.md).
   Holds the [mono-project](mono-project.md) (workspace-level config) and
   [repo](repo.md) definitions (the managed pool).
-- **The on-disk workspace — `mono-repos` (and `mono-repos-offline`).** The
+- **The on-disk workspace — `mono-work` (and `mono-repos-bare`).** The
   [on-disk repo](on-disk-repo.md)s the source + layout engines manage — observed
-  runtime state, not authored config. (It includes *offline* checkouts, which are
-  on disk but not yet materialized/placed.) mono-control treats a repo as opaque by
+  runtime state, not authored config. (It includes *offline* bare repos, on disk but
+  not yet materialized/placed — a bare repo with no worktree.) mono-control treats a
+  repo as opaque by
   default, but a repo carrying an
   [aspect](../repo-aspects/README.md) is read and written as structured data, so
   some abstractions live **inside** such a repo (not in a separate source). The

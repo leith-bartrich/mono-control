@@ -42,14 +42,15 @@ materialized repo answers *"what does this aspect actually contain or do?"*.
 
 How a repo is brought to disk — and *where* — depends on the aspect. Each aspect
 type defines its own materialization, including a **default subdirectory** under
-`mono-repos`. That location is a convention, **not a contract** — nothing
+`mono-work`. That location is a convention, **not a contract** — nothing
 guarantees a repo lives exactly there — so it stays informal and may vary. The
 *act* is the same two engine steps everywhere — the [source engine](../source/README.md)
-acquires the repo into offline (clone/init, stamped), then the
-[layout engine](../layout/README.md) places it — over the [git layer](../git/README.md)'s
-primitives; only the *policy* of where (and any aspect-specific setup) is the
-aspect's. (The first: a [product cluster](product-cluster/README.md) materializes by default
-under `mono-repos/products/`.)
+acquires the repo into offline (clone/init `--bare`, stamped), then the
+[layout engine](../layout/README.md) places it (`worktree add`) — over the
+[git layer](../git/README.md)'s primitives; only the *policy* of where (and any
+aspect-specific setup) is the aspect's. (The first: a
+[product cluster](product-cluster/README.md) materializes by default under
+`mono-work/products/`.)
 
 ## Reference: subdir as a friendly alias
 
