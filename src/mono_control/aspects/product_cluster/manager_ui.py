@@ -43,7 +43,7 @@ def _confirm_dirty(dirty: list[str]) -> bool:
 def manage(store: RepoStore) -> None:
     """Run the interactive product-cluster manager until the user exits."""
     while True:
-        inv = scan(store.broker, paths.REPOS_DIR, paths.OFFLINE_DIR)
+        inv = scan(store.broker, paths.WORK_DIR, paths.BARE_DIR)
         by_label: dict[str, object] = {}
         choices: list[str] = []
         for repo in discover_repos(store, ASPECT):
@@ -111,7 +111,7 @@ def _mark(store: RepoStore) -> None:
 
 def _manage_one(store: RepoStore, repo) -> None:
     while True:
-        observed = scan(paths.REPOS_DIR, paths.OFFLINE_DIR).repos.get(repo.slug)
+        observed = scan(store.broker, paths.WORK_DIR, paths.BARE_DIR).repos.get(repo.slug)
         state = observed.state if observed is not None else "absent"
         console.print(f"[bold]{repo.slug}[/bold] — {repo.name}  ({state})")
         action = questionary.select(
@@ -133,8 +133,8 @@ def _manage_one(store: RepoStore, repo) -> None:
                 require_cluster_present(
                     store.broker,
                     repo.slug,
-                    workspace_root=paths.REPOS_DIR,
-                    offline_root=paths.OFFLINE_DIR,
+                    work_root=paths.WORK_DIR,
+                    bare_root=paths.BARE_DIR,
                 )
             except ClusterLayoutError as e:
                 console.print(f"[red]error:[/red] {e}")

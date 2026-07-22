@@ -1,8 +1,8 @@
 """The cluster layout: a product cluster's authored repo arrangement.
 
 A product cluster holds a single layout document —
-``product-cluster/default-layout.json`` inside the materialized cluster checkout —
-mapping member repo slugs to a location under ``mono-repos/`` and a role
+``product-cluster/default-layout.json`` inside the materialized cluster worktree —
+mapping member repo slugs to a location under ``mono-work/`` and a role
 (``dev`` | ``dep``). See
 ``docs/design/layers/repo-aspects/product-cluster/layout.md``.
 
@@ -60,7 +60,7 @@ class ClusterLayoutVersionError(ClusterLayoutError):
 class LayoutMember(StrictModel):
     """One member repo's placement + role within a cluster layout."""
 
-    location: str  # subdir under mono-repos/ where the member materializes
+    location: str  # subdir under mono-work/ where the member's worktree materializes
     role: Literal["dev", "dep"]
 
 
@@ -138,19 +138,19 @@ def require_cluster_present(
     broker: BrokerProtocol,
     slug: str,
     *,
-    workspace_root: Path,
-    offline_root: Path,
+    work_root: Path,
+    bare_root: Path,
     require_materialized: bool = True,
 ) -> OnDiskRepo:
-    """Return the cluster's observed checkout, or raise if it can't hold a layout.
+    """Return the cluster's observed repo, or raise if it can't hold a layout.
 
     The layout lives *inside* the cluster, so the cluster must be on disk to read
-    or write it. By default it must be **materialized** (the case for authoring
-    via the ``layout`` verbs). ``require_materialized=False`` also accepts an
-    **offline** checkout — used when a swap reads a freshly-acquired cluster's
-    layout *before* placing it.
+    or write it. By default it must be **materialized** — have a worktree (the case
+    for authoring via the ``layout`` verbs). ``require_materialized=False`` also
+    accepts an **offline** bare repo (the layout is read from its HEAD blob) — used
+    when a swap reads a freshly-acquired cluster's layout *before* placing it.
     """
-    observed = scan(broker, workspace_root, offline_root).repos.get(slug)
+    observed = scan(broker, work_root, bare_root).repos.get(slug)
     if observed is None:
         raise ClusterLayoutNotFoundError(f"{slug!r} is not present locally")
     if require_materialized and observed.state != "materialized":

@@ -5,8 +5,8 @@ core broker client: run the source half, re-scan the (broker-observed) on-disk
 inventory, run the layout half, return both reports. Every mat / demat verb
 builds its own ``LayoutTarget`` and hands it here, preserving the
 source → re-scan → layout ordering (the broker re-observes and re-verifies at each
-effecting verb). ``acquire`` runs the source half alone (clone/fetch into offline,
-no placement) for callers that need a repo present before deciding placement.
+effecting verb). ``acquire`` runs the source half alone (clone/init the bare repo,
+no worktree) for callers that need a repo present before deciding placement.
 ``init`` and ``mark_aspect`` are the two verbs that *don't* fit that shape (one
 creates a repo def, one toggles a flag).
 """
@@ -35,7 +35,7 @@ def init(
     repo_store: RepoStore,
     broker: BrokerProtocol,
 ) -> tuple[str, source_engine.SourceReport]:
-    """Create a brand-new repo def + ``git init`` it into offline (broker-side).
+    """Create a brand-new repo def + ``git init --bare`` it (offline; broker-side).
 
     ``name`` is the primary user-facing handle; the slug is derived
     mechanically via :func:`make_slug` unless ``slug`` is supplied (the
@@ -69,8 +69,8 @@ def apply_target(
     target: LayoutTarget,
     *,
     broker: BrokerProtocol,
-    workspace_root: Path,
-    offline_root: Path,
+    work_root: Path,
+    bare_root: Path,
 ) -> tuple[source_engine.SourceReport, layout_engine.LayoutReport]:
     """Orchestrate source → layout against ``target``.
 
@@ -89,12 +89,12 @@ def apply_target(
     )
     resolved_refs = {o.slug: o.resolved for o in source_report.outcomes}
 
-    inventory = scan(broker, workspace_root, offline_root)
+    inventory = scan(broker, work_root, bare_root)
     layout_report = layout_engine.run(
         target,
         broker=broker,
         inventory=inventory,
-        workspace_root=workspace_root,
+        workspace_root=work_root,
         resolved_refs=resolved_refs,
     )
     return source_report, layout_report
@@ -105,12 +105,13 @@ def acquire(
     *,
     broker: BrokerProtocol,
 ) -> source_engine.SourceReport:
-    """Acquire repos into offline (clone / init / fetch) **without placing them**.
+    """Acquire repos as bare repos (clone / init / fetch) **without placing them**.
 
     The source half of :func:`apply_target` used on its own — when a caller needs
     a repo present locally to read its contents before deciding placement (e.g.
     reading a product cluster's layout before a swap tears the workspace down, so
-    an unreachable cluster fails *before* anything is cleared).
+    an unreachable cluster fails *before* anything is cleared). Creates the bare
+    repo under the bare root; no worktree until ``place``.
     """
     return source_engine.run(
         source_engine.SourceRequest(refs_by_slug={s: set() for s in slugs}),

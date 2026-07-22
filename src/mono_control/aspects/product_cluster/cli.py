@@ -216,8 +216,8 @@ app.add_typer(mat_app, name="mat")
 
 
 def _observed_materialized_location(ctx: typer.Context, repo: Repo) -> str:
-    """Return the cluster's current subdir under REPOS_DIR, or fail."""
-    inv = scan(_app(ctx).broker, paths.REPOS_DIR, paths.OFFLINE_DIR)
+    """Return the cluster's current worktree subdir under WORK_DIR, or fail."""
+    inv = scan(_app(ctx).broker, paths.WORK_DIR, paths.BARE_DIR)
     observed = inv.repos.get(repo.slug)
     if observed is None or observed.state != "materialized":
         raise _fail(
@@ -225,11 +225,11 @@ def _observed_materialized_location(ctx: typer.Context, repo: Repo) -> str:
             f"or `mat layout-target` to place and check out in one command"
         )
     try:
-        return str(observed.location.relative_to(paths.REPOS_DIR))
+        return str(observed.location.relative_to(paths.WORK_DIR))
     except ValueError:
         raise _fail(
             f"{repo.slug!r} is at {observed.location}, which is not under "
-            f"the workspace root {paths.REPOS_DIR}"
+            f"the work root {paths.WORK_DIR}"
         )
 
 
@@ -259,7 +259,7 @@ def mat_moveto(
     ),
     slug_only: bool = _SLUG_FLAG,
 ) -> None:
-    """Place a cluster at ``mono-repos/products/<subdir>``, no ref change."""
+    """Place a cluster's worktree at ``mono-work/products/<subdir>``, no ref change."""
     repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
     _require_aspect(repo)
     _exit_unless(actions.place(repo, subdir_override, store=_store(ctx), console=console))
@@ -314,7 +314,7 @@ def mat_layout_target(
     name: str = typer.Option(
         None,
         "--name",
-        help="Subdir under mono-repos/products/ (default: slugified repo name).",
+        help="Subdir under mono-work/products/ (default: slugified repo name).",
     ),
     branch: str = typer.Option(
         None, "--branch", help="Branch whose head to check out (mutually exclusive with --commit)."
@@ -324,7 +324,7 @@ def mat_layout_target(
     ),
     slug_only: bool = _SLUG_FLAG,
 ) -> None:
-    """Declarative one-liner: place at ``products/<name>`` + (optionally) check out a ref."""
+    """Declarative one-liner: place a worktree at ``products/<name>`` + (optionally) check out a ref."""
     if branch and commit:
         raise _fail("--branch and --commit are mutually exclusive")
     repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
@@ -347,7 +347,7 @@ def demat(
     slug_only: bool = _SLUG_FLAG,
     allow_dirty: bool = _ALLOW_DIRTY,
 ) -> None:
-    """Retire a product-cluster from its location back to offline.
+    """Retire a product-cluster back to offline (remove its worktree; the bare repo survives).
 
     Non-destructive, but refused if the cluster is dirty (its committed state
     anchors reproducibility — see :mod:`.actions`). ``--allow-dirty`` overrides.
@@ -375,7 +375,7 @@ def _resolve_cluster(
         repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
         _require_aspect(repo)
         return repo
-    inv = scan(_app(ctx).broker, paths.REPOS_DIR, paths.OFFLINE_DIR)
+    inv = scan(_app(ctx).broker, paths.WORK_DIR, paths.BARE_DIR)
     materialized = [
         repo
         for repo in discover_repos(store, ASPECT)
@@ -399,8 +399,8 @@ def _layout_store_for(ctx: typer.Context, repo: Repo) -> ClusterLayoutStore:
         require_cluster_present(
             broker,
             repo.slug,
-            workspace_root=paths.REPOS_DIR,
-            offline_root=paths.OFFLINE_DIR,
+            work_root=paths.WORK_DIR,
+            bare_root=paths.BARE_DIR,
         )
     except ClusterLayoutError as e:
         raise _fail(e)
@@ -440,10 +440,11 @@ def conform_relayout(
 def conform_clear(ctx: typer.Context, allow_dirty: bool = _ALLOW_DIRTY) -> None:
     """Reset the whole workspace to empty (retire every repo to offline).
 
-    Non-destructive — repos move to ``mono-repos-offline/`` — but refused if any
+    Non-destructive — each worktree is removed while its bare repo (and every
+    committed thing in it) survives under ``mono-repos-bare/`` — but refused if any
     materialized product-cluster is dirty (its committed state anchors
-    reproducibility); ``--allow-dirty`` overrides. Member repos may be dirty: their
-    work rides to offline and is restored on re-place.
+    reproducibility); ``--allow-dirty`` overrides. A member with *uncommitted* work
+    is itself refused by the broker's dirty-gated retire, so nothing is lost.
     """
     _exit_unless(actions.clear(store=_store(ctx), console=console, on_dirty=_allow(allow_dirty)))
 
@@ -510,7 +511,7 @@ def layout_add(
     ctx: typer.Context,
     member: str,
     location: str = typer.Option(
-        ..., "--location", "-l", help="Subdir under mono-repos/ for the member."
+        ..., "--location", "-l", help="Subdir under mono-work/ for the member's worktree."
     ),
     role: str = typer.Option(
         ..., "--role", "-r", callback=_validate_role, help="Member role: dev | dep."

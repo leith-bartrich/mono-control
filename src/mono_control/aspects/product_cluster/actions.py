@@ -48,8 +48,8 @@ def apply(target: LayoutTarget, *, store: RepoStore, console: Console) -> bool:
     source_report, layout_report = repo_ops.apply_target(
         target,
         broker=store.broker,
-        workspace_root=paths.REPOS_DIR,
-        offline_root=paths.OFFLINE_DIR,
+        work_root=paths.WORK_DIR,
+        bare_root=paths.BARE_DIR,
     )
     repo_ops.render_outcomes("source", source_report.outcomes, console=console)
     repo_ops.render_outcomes("layout", layout_report.outcomes, console=console)
@@ -61,10 +61,12 @@ def dirty_clusters(store: RepoStore) -> list[str]:
 
     A product cluster's *committed* state anchors reproducibility, so tearing a dirty
     one down (clear / swap / demat) would un-pin the current layout. Member repos are
-    exempt — their work rides to offline on retire and is restored on re-place. Each
-    caller filters this to the clusters *it* would retire (see :func:`_gate`).
+    not surfaced here, but the broker's ``retire`` is itself dirty-gated (a worktree
+    with uncommitted changes is refused rather than discarded), so a dirty member is
+    never silently lost either. Each caller filters this to the clusters *it* would
+    retire (see :func:`_gate`).
     """
-    inv = scan(store.broker, paths.REPOS_DIR, paths.OFFLINE_DIR)
+    inv = scan(store.broker, paths.WORK_DIR, paths.BARE_DIR)
     return sorted(
         r.slug
         for r in discover_repos(store, ASPECT)
@@ -112,7 +114,7 @@ def demat(
     console: Console,
     on_dirty: Callable[[list[str]], bool] | None = None,
 ) -> bool:
-    """Retire a cluster to offline; gated if *that* cluster is dirty."""
+    """Retire a cluster to offline (remove its worktree); gated if *that* cluster is dirty."""
     dirty = [repo.slug] if repo.slug in dirty_clusters(store) else []
     if not _gate(dirty, console, on_dirty):
         return False
@@ -127,7 +129,7 @@ def clear(
     console: Console,
     on_dirty: Callable[[list[str]], bool] | None = None,
 ) -> bool:
-    """Reset the whole workspace to empty; gated if *any* cluster is dirty."""
+    """Reset the whole workspace to empty (remove every worktree); gated if *any* cluster is dirty."""
     if not _gate(dirty_clusters(store), console, on_dirty):
         return False
     return apply(LayoutTarget(pre_clear=True, targets={}), store=store, console=console)
@@ -155,7 +157,7 @@ def relayout(
 
     # Ensure the cluster is present so its layout is readable; acquire only if absent
     # (no churn for the common already-present case).
-    if repo.slug not in scan(store.broker, paths.REPOS_DIR, paths.OFFLINE_DIR).repos:
+    if repo.slug not in scan(store.broker, paths.WORK_DIR, paths.BARE_DIR).repos:
         src = repo_ops.acquire({repo.slug}, broker=store.broker)
         repo_ops.render_outcomes("acquire", src.outcomes, console=console)
         if not src.ok:
@@ -165,8 +167,8 @@ def relayout(
         require_cluster_present(
             store.broker,
             repo.slug,
-            workspace_root=paths.REPOS_DIR,
-            offline_root=paths.OFFLINE_DIR,
+            work_root=paths.WORK_DIR,
+            bare_root=paths.BARE_DIR,
             require_materialized=False,
         )
         layout = ClusterLayoutStore(store.broker, repo.slug).load_or_empty()

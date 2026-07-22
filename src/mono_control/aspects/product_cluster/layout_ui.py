@@ -80,7 +80,7 @@ def _add(store: ClusterLayoutStore, repo_store: RepoStore, cluster_slug: str) ->
     existing = layout.members.get(slug)  # pre-fill when editing an existing member
     location = (
         questionary.text(
-            "location under mono-repos/:",
+            "location under mono-work/:",
             default=existing.location if existing else slug,
         ).ask()
         or ""
