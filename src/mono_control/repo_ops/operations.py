@@ -13,10 +13,12 @@ creates a repo def, one toggles a flag).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
-from ..broker import BrokerProtocol
-from ..config import Repo, RepoStore, make_slug
+from ..broker import BrokerError, BrokerProtocol
+from ..config import ConfigError, Repo, RepoStore, make_slug, slugify
+from ..config import source_names as sn
 from ..engines import layout as layout_engine
 from ..engines import source as source_engine
 from ..layout_target import LayoutTarget
@@ -113,6 +115,106 @@ def acquire(
     return source_engine.run(
         source_engine.SourceRequest(refs_by_slug={s: set() for s in slugs}),
         broker=broker,
+    )
+
+
+@dataclass(frozen=True)
+class ForkAdoption:
+    """What :func:`adopt_fork` did — config changes plus the eager remote stamp."""
+
+    slug: str
+    source_key: str  # "fork-ours" or "fork-<purpose>"
+    url: str
+    dev_repointed: bool
+    old_dev: str | None  # recorded as branches["dev-upstream"] when repointed
+    new_dev: str | None
+    checkout: Path | None  # on-disk location, or None (config-only)
+    remote_stamped: bool
+    remote_error: str | None  # stamp failed; config was still saved
+
+
+def adopt_fork(
+    slug: str,
+    url: str,
+    *,
+    purpose: str = "ours",
+    dev_branch: str | None = None,
+    repo_store: RepoStore,
+    broker: BrokerProtocol,
+) -> ForkAdoption:
+    """The governed upstream→fork transition (see ``docs/design/layers/data/repo.md``).
+
+    Adds ``fork-<purpose>`` beside the repo's ``upstream`` — upstream-only for
+    now: an ``origin`` repo gaining a fork is a plain ``source add``, and an
+    ``origin`` *adopting* an upstream is the other governed migration. When the
+    fork is ours and ``dev_branch`` differs from the current dev line, ``dev``
+    repoints to it and the old line is preserved as ``dev-upstream``.
+
+    The new key is appended after ``upstream``, so first-declared source
+    resolution is unchanged. Config is saved first; when a checkout exists on
+    disk the fork remote is then eagerly stamped into ``.git/config`` via the
+    broker (``set_remote``) — a failed stamp is reported via ``remote_error``,
+    never rolled back (engines will conform remotes later).
+    """
+    repo = repo_store.load(slug)
+    if sn.UPSTREAM not in repo.sources:
+        raise ConfigError(
+            f"repo {slug!r} has no {sn.UPSTREAM!r} source — the fork transition "
+            "applies to upstream-based repos (for an origin repo, just add the "
+            "source directly)"
+        )
+    key = sn.FORK_OURS if purpose == "ours" else sn.fork_key(slugify(purpose))
+    if key in repo.sources:
+        raise ConfigError(
+            f"repo {slug!r} already has source {key!r} — use `repo source add` "
+            "to change its URL"
+        )
+    if dev_branch is not None and key != sn.FORK_OURS:
+        raise ConfigError(
+            "a third-party fork is a tracked reference and never repoints "
+            f"{sn.DEV!r} — drop the dev branch or use purpose 'ours'"
+        )
+
+    old_dev = repo.branches.get(sn.DEV)
+    dev_repointed = dev_branch is not None and dev_branch != old_dev
+    if dev_repointed:
+        existing = repo.branches.get(sn.DEV_UPSTREAM)
+        if existing is not None and existing != old_dev:
+            raise ConfigError(
+                f"repo {slug!r} already records {sn.DEV_UPSTREAM!r} = "
+                f"{existing!r}; refusing to overwrite it"
+            )
+        if old_dev is not None:
+            repo.branches[sn.DEV_UPSTREAM] = old_dev
+        repo.branches[sn.DEV] = dev_branch
+
+    repo.sources[key] = url  # plain append — upstream stays first-declared
+    repo_store.save(repo)
+
+    checkout: Path | None = None
+    remote_stamped = False
+    remote_error: str | None = None
+    observed = next((r for r in broker.scan().repos if r.slug == slug), None)
+    if observed is not None:
+        # The wire location is relative to its state's root; the broker owns the
+        # absolute path (and re-resolves the checkout from the slug itself).
+        checkout = Path(observed.location)
+        try:
+            broker.set_remote(slug, key, url)
+            remote_stamped = True
+        except BrokerError as e:
+            remote_error = str(e)
+
+    return ForkAdoption(
+        slug=slug,
+        source_key=key,
+        url=url,
+        dev_repointed=dev_repointed,
+        old_dev=old_dev,
+        new_dev=repo.branches.get(sn.DEV),
+        checkout=checkout,
+        remote_stamped=remote_stamped,
+        remote_error=remote_error,
     )
 
 

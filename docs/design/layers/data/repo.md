@@ -79,8 +79,11 @@ repo cannot both originate with us and be based on an external base.
   `mirror-<them>`) and accompany either canonical.
 
 So a key is `origin`, `upstream`, or `<kind>-<purpose>` with `<kind>` from the reserved
-set {`fork`, `mirror`} — validated at load, so a typo'd kind surfaces rather than silently
-meaning nothing. The *values* stay free (any URL or path). The structural rule:
+set {`fork`, `mirror`}. The vocabulary is governed by the **authoring flows** — the guided
+UI and the fork/source verbs construct only governed keys — and, eventually, by engine
+conformance; it is deliberately *not* enforced by schema validation at load, so arbitrary
+extra names remain legal in the model (runtime meaning is the engines' concern). The
+*values* stay free (any URL or path). The structural rule:
 **`origin` and `upstream` are mutually exclusive** (a repo is ours *or* based on an
 external base, never both), while `fork-*` / `mirror-*` are **copies relative to whichever
 canonical is present**. The purpose `ours` is reserved to mark *our own* copy, so "our
@@ -97,6 +100,23 @@ mono-control performs, re-stamping the local remote. It forces a conscious "fork
 mirror it?" decision at the moment the relationship changes, rather than letting `origin`
 silently mean two things. When there *is* an upstream, git's default `origin` is
 suppressed at clone with `git clone --origin <name>`.
+
+**Forking an upstream is a governed transition.** The mirror-image moment: a consumed
+`upstream` repo gets forked by us (typically because the base won't take our patches and
+our fork now carries the development line). The definition gains `fork-ours` beside the
+`upstream` — ownership does not change; the upstream remains the canonical — and, when
+the fork's development line differs from the base's, `branches["dev"]` repoints to the
+fork's branch with the upstream's old dev line preserved under the reserved purpose
+[`dev-upstream`](#branches). mono-control performs this transition (interactively via
+`repo manage` → "add fork", or scriptably via `repo fork add`) rather than leaving two
+maps to be hand-edited in the right order. The new source key is appended *after* the
+canonical, so first-declared source resolution is unchanged. When a checkout exists on
+disk (materialized or offline), the transition **eagerly stamps** the fork remote into
+`.git/config` (`git remote add fork-ours <url>`); the engines will additionally conform
+declared remotes as ordinary declared state in the future — the eager stamp just makes
+the fork fetchable immediately. Config is saved first; a failed stamp is reported, never
+rolled back. A third-party fork (`fork-<them>`) may be added by the same flow as a
+tracked reference — it never repoints `dev`.
 
 *Deferred:* **per-instance source overrides** — e.g. a machine-local mirror preferred as
 a clone source — would live in a local layer *on top of* shared `mono-config`, not in the
@@ -128,11 +148,18 @@ this map. That is the **patch-stack**: source-bound, recipe-bearing (base ref, p
 output branch), maintained by a rebase operation — its own construct, designed separately.
 (`branches` couldn't hold its recipe regardless.)
 
-**`dev` is the only standardized purpose — for now the only one we *can* define.** It is
-the active development line ("the development line, whatever it's literally named"),
-resolving to the remote's **default branch** unless a repo overrides it
-(`branches: {dev: develop}`). A repo may also declare **arbitrary named branches** (free
-purposes) and reference them explicitly, but mono-control standardizes no meaning for them.
+**Two standardized purposes: `dev` and `dev-upstream`.** `dev` is the active development
+line ("the development line, whatever it's literally named"), resolving to the remote's
+**default branch** unless a repo overrides it (`branches: {dev: develop}`).
+`dev-upstream` is the **upstream base's development line**: it appears only on
+upstream-based repos whose `dev` has been repointed to our fork's line (the
+[fork transition](#sources)), recording what `dev` used to mean so the base's line stays
+addressable — e.g. as the base ref of a future patch-stack recipe. The name follows the
+`<thing>-<qualifier>` pattern of `fork-ours`. It is still a bare branch name resolved by
+composition — by its meaning it composes against the `upstream` remote
+(`upstream/<branch>`) — and it is a shared line, not a patch-stack. A repo may also
+declare **arbitrary named branches** (free purposes) and reference them explicitly, but
+mono-control standardizes no meaning for them.
 
 We deliberately do **not** define `stable` / release / version branches here. Those are
 upstream conventions we don't control, and "stability" is usually expressed as a *tag*

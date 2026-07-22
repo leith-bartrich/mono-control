@@ -31,6 +31,7 @@ from .models import (
     ReadLayoutResult,
     RemoteDefaultBranchResult,
     RepoDefsResult,
+    SetRemoteRequest,
     SystemResult,
     WireInventory,
 )
@@ -145,6 +146,16 @@ class TypedBrokerMixin:
         )
         return result.branch
 
+    def set_remote(self, slug: str, name: str, url: str) -> OkResult:
+        """Add or repoint remote ``name`` → ``url`` on ``slug``'s checkout.
+
+        The eager fork-remote stamp used by ``adopt_fork``: the broker resolves
+        ``slug``'s on-disk checkout and runs ``git remote add`` / ``set-url``.
+        Raises ``BrokerError`` if the broker rejects a param or the stamp fails.
+        """
+        params = SetRemoteRequest(slug=slug, name=name, url=url).model_dump()
+        return OkResult.model_validate(self.call("set_remote", params))
+
 
 @runtime_checkable
 class BrokerProtocol(Protocol):
@@ -185,6 +196,8 @@ class BrokerProtocol(Protocol):
     def save_system(self, system: dict[str, Any]) -> OkResult: ...
 
     def remote_default_branch(self, url: str) -> str | None: ...
+
+    def set_remote(self, slug: str, name: str, url: str) -> OkResult: ...
 
 
 class BrokerClient(TypedBrokerMixin):

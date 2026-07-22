@@ -109,6 +109,14 @@ earlier design trusted a `MONO_CONTROL_IN_CONTAINER` env var, but a one-line
 `export` defeated it, so the gate was moved to the baked file.) Use `mproj`, which
 always runs mono-control in the container.
 
+## GitHub authentication
+
+Cloning private repos needs a credential, but the **container never holds one**.
+All git and filesystem effects run on the *host* via the broker (see the broker
+layer), so acquisition uses your host's own git credentials — the OS keyring
+(Windows Credential Manager, the macOS Keychain) or `gh`'s store that native git
+already reads. Nothing is injected into, or written from, the container.
+
 ## Dev container
 
 Interactive development happens inside the container via VS Code Dev Containers

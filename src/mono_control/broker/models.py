@@ -310,6 +310,26 @@ class SlugRequest(StrictModel):
     slug: str
 
 
+class SetRemoteRequest(StrictModel):
+    """Add or repoint remote ``name`` → ``url`` on ``slug``'s on-disk checkout.
+
+    The eager fork-remote stamp: :func:`repo_ops.adopt_fork` saves config, then
+    asks the broker to conform the named remote into the checkout's
+    ``.git/config``. Carries a *slug* (the broker resolves its checkout — the
+    container never names host paths) plus the remote ``name`` and its https
+    ``url``.
+
+    SHIM SECURITY (real handler, other repo): all three params are
+    attacker-influenced. The broker MUST reject a non-bare slug, a malformed
+    remote name, and any non-https / ``transport::``-helper url before running
+    ``git remote add`` / ``set-url`` — never interpolating them into a shell.
+    """
+
+    slug: str
+    name: str
+    url: str
+
+
 class OkResult(StrictModel):
     """A minimal acknowledgement for write verbs."""
 

@@ -82,8 +82,14 @@ layout-target is the shared origin: the source engine derives *what to acquire* 
 it, the layout engine reconciles *how to arrange* against it.
 
 Source resolution follows the governed [sources](../data/repo.md#sources) vocabulary, and
-the ref is always [`dev`](../data/repo.md#branches) (above). Leaving every checkout **on
+the ref is always [`dev`](../data/repo.md#branches) (above). (The current implementation
+resolves the **first-declared** source entry; the [fork transition](../data/repo.md#sources)
+deliberately appends `fork-ours` *after* the canonical so acquisition is unchanged, and
+conforming a checkout's declared named remotes into `.git/config` — beyond the eager
+stamp done at transition time — is engine work, TBD.) Leaving every checkout **on
 `dev`** hands the [layout engine](../layout/README.md) a clean, correctly-reffed checkout
 to simply *place* — placement-only. More opinionated ref work (advancing to a pinned
 commit, pulls) is a **later layer that runs after the layout engine**, not part of
-acquisition. Fetch policy and auth remain **TBD**.
+acquisition. Fetch policy remains **TBD**. Acquisition is a broker effect: the clone
+/ fetch runs host-side, so it uses the host's own git credentials and no token ever
+enters the container.

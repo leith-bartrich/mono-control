@@ -19,8 +19,10 @@ from .models import (
     slugify,
 )
 from .repo_store import RepoStore, resolve_repo
+from . import source_names
 
 __all__ = [
+    "source_names",
     "load_config",
     "save_config",
     "system_exists",

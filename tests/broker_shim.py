@@ -214,6 +214,7 @@ def _move(src: Path, dst: Path) -> None:
 INVALID_PARAMS = -32602  # JSON-RPC code the real shim raises for rejected input.
 
 _SLUG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_REMOTE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _HEX_RE = re.compile(r"[0-9a-fA-F]{4,64}")
 _ALLOWED_URL_SCHEMES = frozenset({"https"})
 
@@ -223,6 +224,13 @@ def _valid_slug(slug: Any) -> str:
     if not isinstance(slug, str) or not _SLUG_RE.fullmatch(slug):
         raise BrokerError(INVALID_PARAMS, f"invalid slug: {slug!r}")
     return slug
+
+
+def _valid_remote_name(name: Any) -> str:
+    """A git remote name must be a bare token — no slashes, spaces, or ``..``."""
+    if not isinstance(name, str) or not _REMOTE_NAME_RE.fullmatch(name):
+        raise BrokerError(INVALID_PARAMS, f"invalid remote name: {name!r}")
+    return name
 
 
 def _valid_hex_commit(commit: Any) -> str:
@@ -540,6 +548,26 @@ class ShimBroker(TypedBrokerMixin):
         (self.config_dir / "system.json").write_text(
             json.dumps(params["system"], indent=2) + "\n"
         )
+        return {"ok": True}
+
+    # -- remote stamp (real `git remote add/set-url` on the checkout) ------- #
+    def _v_set_remote(self, params: dict) -> dict:
+        # Validate at the boundary (slug shape, remote-name shape, https url)
+        # before touching disk, mirroring the real shim's ``set_remote`` verb.
+        slug = _valid_slug(params.get("slug"))
+        name = _valid_remote_name(params.get("name"))
+        url = _sanitize_remote_url(params.get("url"))
+        observed = self._location_of(slug)
+        if observed is None:
+            raise BrokerError(-32000, f"{slug!r} is not on disk")
+        repo = GitRepo(observed.location)
+        # Membership is checked first (rather than catching a failed ``remote
+        # add``) so real failures aren't masked as "already exists".
+        existing = repo._git("remote").splitlines()
+        if name in existing:
+            repo._git("remote", "set-url", name, url)
+        else:
+            repo._git("remote", "add", name, url)
         return {"ok": True}
 
     # -- remote probe (canned; no real network) ---------------------------- #

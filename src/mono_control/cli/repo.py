@@ -42,8 +42,12 @@ repo_app = typer.Typer(
 )
 source_app = typer.Typer(help="Manage a repo's named sources.", no_args_is_help=True)
 branch_app = typer.Typer(help="Manage a repo's named branches.", no_args_is_help=True)
+fork_app = typer.Typer(
+    help="Governed fork transitions on a repo's sources.", no_args_is_help=True
+)
 repo_app.add_typer(source_app, name="source")
 repo_app.add_typer(branch_app, name="branch")
+repo_app.add_typer(fork_app, name="fork")
 
 
 def _app(ctx: typer.Context) -> AppContext:
@@ -260,6 +264,65 @@ def branch_remove(
         _fail(f"repo {repo.slug!r} has no branch {branch_name!r}")
     _store(ctx).save(repo)
     console.print(f"[green]removed[/green] branch {branch_name} from {repo.slug}")
+
+
+@fork_app.command("add")
+def fork_add(
+    ctx: typer.Context,
+    name_or_slug: str,
+    url: str,
+    purpose: str = typer.Option(
+        "ours",
+        "--purpose",
+        help="'ours' (default) or a tracked-reference name (-> fork-<name>).",
+    ),
+    dev: str = typer.Option(
+        None,
+        "--dev",
+        help=(
+            "The fork's dev branch; repoints `dev` and keeps the old line as "
+            "`dev-upstream` (fork-ours only)."
+        ),
+    ),
+    slug_only: bool = _SLUG_FLAG,
+) -> None:
+    """Governed upstream→fork transition: add a fork source to an upstream repo.
+
+    Adds ``fork-ours`` (or ``fork-<purpose>``) beside the repo's ``upstream``
+    and eagerly stamps the remote into an on-disk checkout when one exists.
+    """
+    repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
+    try:
+        result = repo_ops.adopt_fork(
+            repo.slug,
+            url,
+            purpose=purpose,
+            dev_branch=dev,
+            repo_store=_store(ctx),
+            broker=_app(ctx).broker,
+        )
+    except (ConfigError, ValueError) as e:
+        _fail(e)
+    console.print(f"[green]set[/green] source {result.source_key} on {result.slug}")
+    if result.dev_repointed:
+        old = (
+            f" (old dev {result.old_dev!r} kept as dev-upstream)"
+            if result.old_dev is not None
+            else ""
+        )
+        console.print(f"[green]repointed[/green] dev -> {result.new_dev}{old}")
+    if result.remote_stamped:
+        console.print(
+            f"[green]stamped[/green] remote {result.source_key} in {result.checkout}"
+        )
+    elif result.remote_error is not None:
+        console.print(
+            "[yellow]warning:[/yellow] config saved, but remote stamp failed: "
+            f"{result.remote_error}"
+        )
+        raise typer.Exit(code=1)
+    else:
+        console.print("no on-disk checkout — config only (engines will conform the remote later)")
 
 
 # --------------------------------------------------------------------------- #

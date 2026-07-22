@@ -11,7 +11,9 @@ is "call ``init`` here then ``mark_aspect`` here," not "subclass a template."
 """
 
 from .operations import (
+    ForkAdoption,
     acquire,
+    adopt_fork,
     apply_target,
     init,
     mark_aspect,
@@ -22,6 +24,8 @@ __all__ = [
     "init",
     "apply_target",
     "acquire",
+    "adopt_fork",
+    "ForkAdoption",
     "mark_aspect",
     "render_outcomes",
     "status_color",
