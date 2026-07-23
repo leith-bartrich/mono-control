@@ -98,9 +98,13 @@ layout engine — only the aspect knows a repo is a reproducibility-bearing clus
 
 Because the gate guards *reproducibility* specifically — the cluster's committed history is
 safe in the bare repo regardless — it has an **escape hatch**: `--allow-dirty` on the CLI
-proceeds regardless (accepting that the cluster's uncommitted, unreproducible edits are
-discarded), and the interactive manager prompts *"cluster X is dirty — proceed anyway?"*
-when it would trip. Overriding just accepts "this teardown isn't reproducibly pinned."
+proceeds past the reproducibility warning (and the interactive manager prompts *"cluster X is
+dirty — proceed anyway?"* when it would trip). It does **not** discard uncommitted work: the
+cluster's edits stay in its worktree. It unblocks a reconcile that *keeps* a dirty cluster —
+e.g. `relayout` applying uncommitted layout edits, accepting "this isn't reproducibly pinned"
+— but a reconcile that would *remove* a dirty cluster's worktree (a `clear` / `swap` teardown)
+is still refused by the layout engine's leaf-level dirty gate until you commit or stash. So
+overriding trades away the reproducible pin, never uncommitted work.
 
 ## The implied cluster
 
