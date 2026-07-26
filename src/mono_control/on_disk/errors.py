@@ -10,12 +10,11 @@ class OnDiskError(Exception):
 
 
 class DuplicateSlugError(OnDiskError):
-    """The same slug was stamped on two distinct checkouts.
+    """The same slug was stamped on two distinct bare repos.
 
-    A repo is meant to exist at most once on disk (the one-materialization rule
-    plus an offline holding spot). Encountering the same slug twice means the
-    workspace is in an inconsistent state — surfaced rather than silently
-    picking a winner.
+    A slug is meant to identify exactly one bare repo (with at most one worktree).
+    Encountering the same slug twice means the bare root is in an inconsistent
+    state — surfaced rather than silently picking a winner.
     """
 
     def __init__(self, slug: str, first: Path, second: Path) -> None:
@@ -23,5 +22,5 @@ class DuplicateSlugError(OnDiskError):
         self.first = first
         self.second = second
         super().__init__(
-            f"slug {slug!r} stamped on two checkouts: {first} and {second}"
+            f"slug {slug!r} stamped on two bare repos: {first} and {second}"
         )

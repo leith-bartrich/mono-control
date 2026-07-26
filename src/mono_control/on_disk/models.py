@@ -22,12 +22,18 @@ from typing import Literal
 
 @dataclass(frozen=True)
 class OnDiskRepo:
-    """One observed checkout — its self-stamped slug + where/what it is now."""
+    """One observed repo — its self-stamped slug + where/what it is now.
+
+    Bare + worktree model: ``offline`` = a bare repo with no worktree, whose
+    ``location`` is the bare repo dir under the bare root; ``materialized`` = a
+    bare repo with a worktree, whose ``location`` is that worktree under the work
+    root.
+    """
 
     slug: str
-    location: Path  # absolute path to the checkout root
+    location: Path  # absolute path: the worktree (materialized) or the bare repo (offline)
     state: Literal["offline", "materialized"]
-    commit: str | None  # None if no commits yet (a freshly init'd repo)
+    commit: str | None  # None if no commits yet (a freshly init'd bare repo)
     dirty: bool
 
 

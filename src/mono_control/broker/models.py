@@ -7,9 +7,12 @@ wire — the serializable mirror of the in-memory ``on_disk`` observation
 
 Where the ``on_disk`` models carry *absolute* ``Path`` s (they never leave the
 process), the wire models carry *relative* location strings plus the observed
-``state``. Absolute paths are reconstructed at the container boundary from the
-workspace / offline roots via the free functions below, so the rest of the app
-keeps consuming its internal ``OnDiskInventory`` type unchanged.
+``state``. Physical model: **bare repos + worktrees**. A ``materialized`` repo's
+location is its worktree path under the work root (``mono-work``); an ``offline``
+repo's location is its bare repo path under the bare root (``mono-repos-bare``).
+Absolute paths are reconstructed at the container boundary from the work / bare
+roots via the free functions below, so the rest of the app keeps consuming its
+internal ``OnDiskInventory`` type unchanged.
 
 These run in the container (where pydantic already lives), so they subclass the
 repo's ``StrictModel`` and reject unknown keys — a wire-typo guard.
@@ -41,21 +44,26 @@ class BrokerError(Exception):
 
 
 class WireRepo(StrictModel):
-    """One observed checkout in JSON-native form (relative location + state)."""
+    """One observed repo in JSON-native form (relative location + state).
+
+    ``materialized`` -> ``location`` is the worktree path relative to the work
+    root; ``offline`` -> ``location`` is the bare repo's dir (its slug) relative
+    to the bare root.
+    """
 
     slug: str
-    location: str  # RELATIVE to the state's root, e.g. "ltx-2" or an offline dir
+    location: str  # RELATIVE to the state's root (worktree path, or the bare's slug)
     state: State
     commit: str | None
     dirty: bool
 
 
 class WireUnmanaged(StrictModel):
-    """An unmanaged (unstamped) checkout found under one of the roots.
+    """An unmanaged (unstamped) bare repo found under one of the roots.
 
     Like ``WireRepo`` it carries a relative ``location`` plus the ``state`` that
-    says which root the location is relative to — so a foreign tree found under
-    the offline root round-trips back to the offline root, not the workspace one.
+    says which root the location is relative to. An unstamped bare has no worktree
+    by definition, so the broker reports it ``offline`` (relative to the bare root).
     """
 
     location: str  # RELATIVE to the state's root
@@ -69,16 +77,20 @@ class WireInventory(StrictModel):
     unmanaged: list[WireUnmanaged] = []
 
 
-def _root_for(state: State, workspace_root: Path, offline_root: Path) -> Path:
-    """The root a ``state``'s relative location is reconstructed against."""
-    return workspace_root if state == "materialized" else offline_root
+def _root_for(state: State, work_root: Path, bare_root: Path) -> Path:
+    """The root a ``state``'s relative location is reconstructed against.
+
+    ``materialized`` resolves against the work root (its worktree path);
+    ``offline`` resolves against the bare root (its bare repo dir).
+    """
+    return work_root if state == "materialized" else bare_root
 
 
 def wire_repo_from_on_disk(
-    repo: OnDiskRepo, workspace_root: Path, offline_root: Path
+    repo: OnDiskRepo, work_root: Path, bare_root: Path
 ) -> WireRepo:
     """Project an ``OnDiskRepo`` to its wire form (absolute -> relative location)."""
-    root = _root_for(repo.state, workspace_root, offline_root)
+    root = _root_for(repo.state, work_root, bare_root)
     relative = repo.location.relative_to(root)
     return WireRepo(
         slug=repo.slug,
@@ -90,10 +102,10 @@ def wire_repo_from_on_disk(
 
 
 def wire_repo_to_on_disk(
-    wire: WireRepo, workspace_root: Path, offline_root: Path
+    wire: WireRepo, work_root: Path, bare_root: Path
 ) -> OnDiskRepo:
     """Reconstruct an ``OnDiskRepo`` (absolute location) from its wire form."""
-    root = _root_for(wire.state, workspace_root, offline_root)
+    root = _root_for(wire.state, work_root, bare_root)
     location = root / PurePosixPath(wire.location)
     return OnDiskRepo(
         slug=wire.slug,
@@ -105,34 +117,35 @@ def wire_repo_to_on_disk(
 
 
 def wire_unmanaged_from_on_disk(
-    path: Path, workspace_root: Path, offline_root: Path
+    path: Path, work_root: Path, bare_root: Path
 ) -> WireUnmanaged:
     """Project an unmanaged absolute path to its wire form.
 
-    The discriminator is which root the path lives under, so an offline foreign
-    tree round-trips back to the offline root rather than the workspace one.
+    The discriminator is which root the path lives under. An unstamped bare under
+    the bare root round-trips back to it as ``offline`` (the usual case); the work
+    root branch is kept for symmetry.
     """
-    if path.is_relative_to(workspace_root):
+    if path.is_relative_to(work_root):
         return WireUnmanaged(
-            location=path.relative_to(workspace_root).as_posix(), state="materialized"
+            location=path.relative_to(work_root).as_posix(), state="materialized"
         )
-    if path.is_relative_to(offline_root):
+    if path.is_relative_to(bare_root):
         return WireUnmanaged(
-            location=path.relative_to(offline_root).as_posix(), state="offline"
+            location=path.relative_to(bare_root).as_posix(), state="offline"
         )
     raise ValueError(f"unmanaged path {path} is under neither root")
 
 
 def wire_unmanaged_to_on_disk(
-    wire: WireUnmanaged, workspace_root: Path, offline_root: Path
+    wire: WireUnmanaged, work_root: Path, bare_root: Path
 ) -> Path:
     """Reconstruct an unmanaged absolute path from its wire form."""
-    root = _root_for(wire.state, workspace_root, offline_root)
+    root = _root_for(wire.state, work_root, bare_root)
     return root / PurePosixPath(wire.location)
 
 
 def wire_inventory_from_on_disk(
-    inventory: OnDiskInventory, workspace_root: Path, offline_root: Path
+    inventory: OnDiskInventory, work_root: Path, bare_root: Path
 ) -> WireInventory:
     """Project an ``OnDiskInventory`` to its wire form.
 
@@ -141,18 +154,18 @@ def wire_inventory_from_on_disk(
     """
     return WireInventory(
         repos=[
-            wire_repo_from_on_disk(repo, workspace_root, offline_root)
+            wire_repo_from_on_disk(repo, work_root, bare_root)
             for repo in inventory.repos.values()
         ],
         unmanaged=[
-            wire_unmanaged_from_on_disk(path, workspace_root, offline_root)
+            wire_unmanaged_from_on_disk(path, work_root, bare_root)
             for path in inventory.unmanaged
         ],
     )
 
 
 def wire_inventory_to_on_disk(
-    wire: WireInventory, workspace_root: Path, offline_root: Path
+    wire: WireInventory, work_root: Path, bare_root: Path
 ) -> OnDiskInventory:
     """Reconstruct an ``OnDiskInventory`` (absolute paths) from its wire form.
 
@@ -161,11 +174,11 @@ def wire_inventory_to_on_disk(
     keyed by slug, matching ``scanner.scan``.
     """
     repos = {
-        w.slug: wire_repo_to_on_disk(w, workspace_root, offline_root)
+        w.slug: wire_repo_to_on_disk(w, work_root, bare_root)
         for w in wire.repos
     }
     unmanaged = [
-        wire_unmanaged_to_on_disk(u, workspace_root, offline_root)
+        wire_unmanaged_to_on_disk(u, work_root, bare_root)
         for u in wire.unmanaged
     ]
     return OnDiskInventory(repos=repos, unmanaged=unmanaged)

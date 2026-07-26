@@ -106,6 +106,7 @@ def _plan_present(
         )
 
     if observed.state == "offline":
+        # offline = a bare repo with no worktree → add one (place).
         return PlanItem(
             slug=slug,
             observed=observed,
@@ -116,7 +117,7 @@ def _plan_present(
             target_location=target_location,
         )
 
-    # observed.state == "materialized"
+    # observed.state == "materialized" (a worktree already exists)
     same_location = observed.location == target_location
     ref_change = observed.commit != resolved
 
@@ -190,8 +191,8 @@ def _plan_present_as_is(
     """Plan a placement-only desired state — no ref change ever.
 
     Pure placement: ``resolved_commit`` stays ``None`` so the execute stage
-    moves the checkout but skips the post-move checkout. No dirty gate is
-    needed (a move preserves working-tree state).
+    places/relocates the worktree but skips the post-move checkout. No dirty gate
+    is needed (placing adds a fresh worktree; relocating preserves its state).
     """
     target_location = workspace_root / desired.location
 
@@ -207,6 +208,7 @@ def _plan_present_as_is(
         )
 
     if observed.state == "offline":
+        # offline = a bare repo with no worktree → add one (place).
         return PlanItem(
             slug=slug,
             observed=observed,

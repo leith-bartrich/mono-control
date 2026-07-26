@@ -3,7 +3,7 @@
 A product cluster's **layout** is its single, authored arrangement of member repos —
 the artifact-domain analog of a Visual Studio solution's project layout. One cluster
 expresses exactly one layout. It answers two things per member: *where* the repo sits
-under `mono-repos/`, and *what role* it plays (`dev` vs `dep`).
+under `mono-work/`, and *what role* it plays (`dev` vs `dep`).
 
 The layout is **authored, not captured**. You build and edit it through the cluster's
 manager — scriptable CLI verbs plus an interactive `manage` flow, the same
@@ -38,7 +38,7 @@ document:
 {
   "version": 1,
   "members": {
-    "<repo-slug>": { "location": "<subdir under mono-repos/>", "role": "dev" }
+    "<repo-slug>": { "location": "<subdir under mono-work/>", "role": "dev" }
   }
 }
 ```
@@ -46,7 +46,7 @@ document:
 - **members** — keyed by workspace [slug](../../data/repo.md). The key set *is* the
   cluster's membership: it satisfies the [repo-set](../../data/repo-set.md)
   `members()` interface, so the layout doubles as the cluster's authored repo set.
-- **location** — the subdir under `mono-repos/` where the member materializes; the
+- **location** — the subdir under `mono-work/` where the member materializes; the
   same notion a [layout-target](../../data/layout-target.md) carries.
 - **role** — `dev` or `dep`:
   - **dev** — a repo you actively develop in this cluster; its "latest" is a living

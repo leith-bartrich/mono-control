@@ -25,7 +25,7 @@ class SnapshotEntry(StrictModel):
     """One repo's pinned state within a snapshot."""
 
     commit: str  # the exact commit
-    location: str  # subdirectory the repo is checked out at, relative to mono-repos
+    location: str  # subdirectory the repo's worktree is at, relative to mono-work
 
 
 class Snapshot(VersionedModel):

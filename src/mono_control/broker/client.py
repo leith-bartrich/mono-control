@@ -90,7 +90,7 @@ class TypedBrokerMixin:
         return self._layout_op("relocate", slug, location)
 
     def retire(self, slug: str, location: str | None = None) -> LayoutOpResult:
-        """Retire ``slug`` from the workspace back to the offline holding area."""
+        """Retire ``slug`` back to offline: remove its worktree (the bare repo survives)."""
         return self._layout_op("retire", slug, location)
 
     def _layout_op(self, method: str, slug: str, location: str | None) -> LayoutOpResult:

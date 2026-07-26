@@ -20,7 +20,7 @@ things:
 
 - **version** — the exact commit.
 - **location** — the subdirectory the repo is checked out at, **relative to the
-  `mono-repos` dir**.
+  `mono-work` dir**.
 
 It is deliberately **source-free**: a remote URL is mutable and not part of a
 repo, so it is never stored here. Resolving *where to fetch* a slug from is the

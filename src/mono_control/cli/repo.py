@@ -433,8 +433,8 @@ def _apply_and_exit(ctx: typer.Context, target: LayoutTarget) -> None:
     source_report, layout_report = repo_ops.apply_target(
         target,
         broker=_app(ctx).broker,
-        workspace_root=paths.REPOS_DIR,
-        offline_root=paths.OFFLINE_DIR,
+        work_root=paths.WORK_DIR,
+        bare_root=paths.BARE_DIR,
     )
     repo_ops.render_outcomes("source", source_report.outcomes, console=console)
     repo_ops.render_outcomes("layout", layout_report.outcomes, console=console)
@@ -443,12 +443,12 @@ def _apply_and_exit(ctx: typer.Context, target: LayoutTarget) -> None:
 
 
 def _observed_materialized_location(ctx: typer.Context, repo: Repo) -> str:
-    """Return ``repo``'s currently materialized subdir (relative to REPOS_DIR).
+    """Return ``repo``'s currently materialized worktree subdir (relative to WORK_DIR).
 
     Errors out if the repo isn't materialized — the user should ``moveto``
     first (or use ``layout-target`` to combine placement and ref intent).
     """
-    inv = scan(_app(ctx).broker, paths.REPOS_DIR, paths.OFFLINE_DIR)
+    inv = scan(_app(ctx).broker, paths.WORK_DIR, paths.BARE_DIR)
     observed = inv.repos.get(repo.slug)
     if observed is None:
         _fail(
@@ -457,15 +457,15 @@ def _observed_materialized_location(ctx: typer.Context, repo: Repo) -> str:
         )
     if observed.state != "materialized":
         _fail(
-            f"{repo.slug!r} is offline; use `mat moveto` to place it first, "
-            f"or `mat layout-target` to place and check out in one command"
+            f"{repo.slug!r} is offline (no worktree); use `mat moveto` to place it "
+            f"first, or `mat layout-target` to place and check out in one command"
         )
     try:
-        return str(observed.location.relative_to(paths.REPOS_DIR))
+        return str(observed.location.relative_to(paths.WORK_DIR))
     except ValueError:
         _fail(
             f"{repo.slug!r} is materialized at {observed.location}, which is not "
-            f"under the workspace root {paths.REPOS_DIR}"
+            f"under the work root {paths.WORK_DIR}"
         )
 
 
@@ -492,7 +492,7 @@ def mat_moveto(
     relpath: str,
     slug_only: bool = _SLUG_FLAG,
 ) -> None:
-    """Place a repo at ``mono-repos/<relpath>`` without touching the ref."""
+    """Place a repo's worktree at ``mono-work/<relpath>`` without touching the ref."""
     repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
     target = LayoutTarget(
         targets={repo.slug: LayoutTargetPresentAsIs(location=relpath)}
@@ -545,7 +545,7 @@ def mat_layout_target(
     ctx: typer.Context,
     name_or_slug: str,
     location: str = typer.Option(
-        ..., "--location", help="Subdir under mono-repos."
+        ..., "--location", help="Subdir under mono-work (the worktree location)."
     ),
     branch: str = typer.Option(
         None, "--branch", help="Branch whose head to check out (mutually exclusive with --commit)."
@@ -575,7 +575,7 @@ def demat_cmd(
     name_or_slug: str,
     slug_only: bool = _SLUG_FLAG,
 ) -> None:
-    """Retire a repo from its location back to offline (layout only)."""
+    """Retire a repo back to offline: remove its worktree (the bare repo survives)."""
     repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
     target = LayoutTarget(targets={repo.slug: LayoutTargetAbsent()})
     _apply_and_exit(ctx, target)

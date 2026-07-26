@@ -34,7 +34,7 @@ def test_repo_init_creates_offline_repo(broker_env):
     repo = RepoStore(env.broker).load("plain")
     assert repo.name == "Plain"
     assert repo.aspects == set()
-    assert (env.off / "plain" / ".git").is_dir()
+    assert GitRepo(env.off / "plain").is_bare_repository()
     assert GitRepo(env.off / "plain").slug() == "plain"
 
 
@@ -59,7 +59,7 @@ def test_repo_init_derives_slug_from_name(broker_env):
     slugs = RepoStore(env.broker).list()
     assert len(slugs) == 1
     assert slugs[0].startswith("my-plain-repo-")
-    assert (env.off / slugs[0] / ".git").is_dir()
+    assert GitRepo(env.off / slugs[0]).is_bare_repository()
 
 
 def test_repo_init_refuses_existing_slug(broker_env):
@@ -84,7 +84,7 @@ def test_repo_mat_moveto_then_branchat_then_demat(broker_env, tmp_path):
     moveto_result = _run(env, "repo", "mat", "moveto", "opaque", "apps/web")
     assert moveto_result.exit_code == 0, moveto_result.output
     placed = env.ws / "apps" / "web"
-    assert (placed / ".git").is_dir()
+    assert (placed / ".git").exists()
     assert GitRepo(placed).slug() == "opaque"
 
     # 2) branchat — change the ref at the current location.
@@ -94,8 +94,8 @@ def test_repo_mat_moveto_then_branchat_then_demat(broker_env, tmp_path):
     # 3) demat — retire via name lookup (slugified comparison).
     demat_result = _run(env, "repo", "demat", "Opaque")
     assert demat_result.exit_code == 0, demat_result.output
-    assert not placed.exists()
-    assert (env.off / "opaque" / ".git").is_dir()
+    assert not placed.exists()  # worktree removed
+    assert GitRepo(env.off / "opaque").is_bare_repository()  # bare survives
 
 
 def test_repo_mat_branchat_blocks_when_not_materialized(broker_env):
@@ -135,7 +135,7 @@ def test_repo_mat_layout_target_declarative(broker_env, tmp_path):
         "--location", "apps/web", "--branch", "main",
     )
     assert result.exit_code == 0, result.output
-    assert (env.ws / "apps" / "web" / ".git").is_dir()
+    assert (env.ws / "apps" / "web" / ".git").exists()
 
 
 def test_repo_mat_layout_target_rejects_branch_and_commit_together(broker_env):

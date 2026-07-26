@@ -59,10 +59,10 @@ def test_apply_target_orders_acquire_then_scan_then_layout(tmp_path):
     target = LayoutTarget(
         targets={"alpha": LayoutTargetPresentCommit(commit=head, location="apps/web")}
     )
-    apply_target(target, broker=broker, workspace_root=ws, offline_root=off)
+    apply_target(target, broker=broker, work_root=ws, bare_root=off)
 
-    # The effect actually landed (offline clone placed into the workspace).
-    assert (ws / "apps" / "web" / ".git").is_dir()
+    # The effect actually landed (a worktree was added under the work root).
+    assert (ws / "apps" / "web" / ".git").exists()
 
     verbs = broker.verbs
     acquire_indices = [i for i, v in enumerate(verbs) if v == "acquire"]

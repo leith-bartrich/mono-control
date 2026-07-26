@@ -34,9 +34,9 @@ single chokepoint.
   `mono-control.slug` stamp), `fetch()`, `checkout(ref)`, `ahead_behind(ref)`
   (`rev-list --count`).
 - **Module-level creation** — `clone(url, dest, *, profile, slug)` and
-  `init(dest, *, profile, slug)` create a checkout (into offline) and apply the
-  stamps below. Plus `ls_remote(url, ref)` (resolvability — does the remote expose
-  this ref).
+  `init(dest, *, profile, slug)` create the **bare** repo (`--bare`, into offline —
+  a bare repo with no worktree) and apply the stamps below. Plus `ls_remote(url, ref)`
+  (resolvability — does the remote expose this ref).
 - **`_run_git([...], cwd=...)`** — the one subprocess chokepoint: list-form args
   (never a shell string), captured output, and exit-code → typed-error mapping.
   Everything else goes through it, so behavior and error handling stay uniform.
@@ -49,12 +49,12 @@ The package will live at `mono_control/git/`. (Note: avoid a module literally na
 
 ## Stamps applied at clone/init
 
-When this layer **creates** a checkout — `clone` or `init` (always into offline) —
-it writes two stamps into the new checkout's `.git/config`, and **both are
-mandatory**: a checkout this layer creates is never left unstamped. (*Materializing*
-a repo — placing offline → a location — is a later filesystem **move** the
-[layout engine](../layout/README.md) does; it carries the stamps along and never
-re-stamps.)
+When this layer **creates** a repo — `clone --bare` or `init --bare` (always into
+offline: a bare repo with no worktree) — it writes two stamps into the new bare
+repo's config, and **both are mandatory**: a bare repo this layer creates is never
+left unstamped. (*Materializing* a repo — placing offline → a location — is a later
+`git worktree add` the [layout engine](../layout/README.md) does off the bare repo;
+the worktree inherits the bare repo's stamps, so it never re-stamps.)
 
 - **Filesystem-capability profile** — `core.filemode` / `core.symlinks` /
   `core.ignorecase`, chosen for the [host platform](../../host-platform.md) the
