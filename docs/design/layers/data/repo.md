@@ -161,6 +161,24 @@ composition — by its meaning it composes against the `upstream` remote
 declare **arbitrary named branches** (free purposes) and reference them explicitly, but
 mono-control standardizes no meaning for them.
 
+**`dev-upstream`'s absence is meaningful — do not fill it in.** mono-control writes it
+*only* in the [fork transition](#sources), and only when the fork's line actually differs
+from the base's. So on a fork-bearing repo the rule reads both ways: `dev-upstream` is present
+**exactly when** the two lines diverge. Its absence therefore says something — that they
+coincide — which is what licenses reading `upstream/<dev>` as the base's line. That is a
+sound derivation, not an assumption that the names happen to match: the authoring flow
+asks, so a repo that got here was checked.
+
+Which makes recording `dev-upstream` equal to `dev` "for completeness" actively wrong,
+not merely redundant. It asserts a divergence that doesn't exist, and it destroys the
+signal — you could no longer tell a repo whose lines were compared and found identical
+from one somebody helpfully filled in. Leave it out and let the absence carry the fact.
+
+(One limit, for honesty: absence can *also* mean no base line was ever recorded — a repo
+that had no `dev` at all when its fork was adopted has nothing to preserve. The reading
+above holds wherever `dev` was set before the fork, which the guided flow always does
+unless you deliberately skip it.)
+
 We deliberately do **not** define `stable` / release / version branches here. Those are
 upstream conventions we don't control, and "stability" is usually expressed as a *tag*
 (frozen) — fundamentally a different thing from a *branch* (floating). How pinned versions
