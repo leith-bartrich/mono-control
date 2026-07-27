@@ -102,7 +102,7 @@ def _add_existing(store: RepoStore, name: str, slug: str) -> None:
         url = (questionary.text("origin URL:").ask() or "").strip()
         if not url:
             return
-        _create(store, name, slug, {source_names.ORIGIN: url}, url)
+        _create(store, name, slug, {source_names.ORIGIN: url}, url, "origin")
         return
 
     url = (questionary.text("upstream URL:").ask() or "").strip()
@@ -110,7 +110,7 @@ def _add_existing(store: RepoStore, name: str, slug: str) -> None:
         return
     if choice == _THEIRS:
         # `dev` names the upstream's own line; there is no second line to record.
-        _create(store, name, slug, {source_names.UPSTREAM: url}, url)
+        _create(store, name, slug, {source_names.UPSTREAM: url}, url, "upstream")
         return
 
     fork_url = (questionary.text("fork (ours) URL:").ask() or "").strip()
@@ -120,21 +120,21 @@ def _add_existing(store: RepoStore, name: str, slug: str) -> None:
     # produces exactly what `manage -> add fork` does: `dev` repointed to the fork's
     # line and the base's line preserved as `dev-upstream`. Hand-writing `fork-ours`
     # here is what let `dev` keep naming the upstream's branch.
-    _create(store, name, slug, {source_names.UPSTREAM: url}, url)
+    _create(store, name, slug, {source_names.UPSTREAM: url}, url, "upstream")
     _adopt_fork_for(store, slug, fork_url)
 
 
 def _create(
-    store: RepoStore, name: str, slug: str, sources: dict[str, str], dev_from: str
+    store: RepoStore, name: str, slug: str, sources: dict[str, str], dev_from: str, label: str
 ) -> None:
-    """Create the def, probing ``dev_from`` for the dev branch."""
-    dev = _prompt_dev_from_remote(store, dev_from)
+    """Create the def, probing ``dev_from`` (named ``label``) for the dev branch."""
+    dev = _prompt_dev_from_remote(store, dev_from, label=label)
     branches = {source_names.DEV: dev} if dev else {}
     store.create(Repo(version=1, slug=slug, name=name, sources=sources, branches=branches))
     console.print(f"[green]created[/green] {slug}")
 
 
-def _prompt_dev_from_remote(store: RepoStore, url: str) -> str | None:
+def _prompt_dev_from_remote(store: RepoStore, url: str, *, label: str = "remote") -> str | None:
     """Probe the remote's default branch and offer it for `dev`; else ask (blank skips).
 
     The probe is a git effect, so it runs broker-side (``remote_default_branch``);
@@ -147,7 +147,7 @@ def _prompt_dev_from_remote(store: RepoStore, url: str) -> str | None:
         console.print("[yellow](couldn't read the remote; specify the dev branch)[/yellow]")
         default = None
     if default and questionary.confirm(
-        f"The remote's default branch is {default!r} — use it as `dev`?", default=True
+        f"The {label}'s default branch is {default!r} — use it as `dev`?", default=True
     ).ask():
         return default
     return (
@@ -276,10 +276,17 @@ def _adopt_fork(
 
 
 def _prompt_fork_dev(store: RepoStore, repo: Repo, url: str) -> str | None:
-    """Probe the fork's default branch and offer a dev repoint; ``None`` keeps dev.
+    """Ask which branch is *our* dev line on the fork; ``None`` keeps the current dev.
 
-    The probe is a git effect, so it runs broker-side (``remote_default_branch``);
-    a broker/transport failure degrades to the plain prompt.
+    The fork's default branch is only a **proxy** for our dev line: a freshly forked
+    repo inherits the base's HEAD, so "the fork defaults to `main`" usually means the
+    fork hasn't been configured yet — not that `main` is where we intend to work. So
+    the probed value seeds the prompt rather than answering it, and the question is
+    asked even when it matches the tracked dev. Skipping it on a match would skip it
+    exactly where the proxy is least trustworthy.
+
+    The probe is a git effect, so it runs broker-side (``remote_default_branch``); a
+    broker/transport failure just leaves the prompt unseeded.
     """
     current = repo.branches.get(source_names.DEV)
     try:
@@ -287,21 +294,16 @@ def _prompt_fork_dev(store: RepoStore, repo: Repo, url: str) -> str | None:
     except Exception:
         console.print("[yellow](couldn't read the fork; specify its dev branch)[/yellow]")
         default = None
-    if default is not None:
-        if default == current:
-            return None  # same line — nothing to repoint
-        tracked = (
-            f"but tracked dev is {current!r}" if current is not None else "and no dev is tracked yet"
-        )
-        if questionary.confirm(
-            f"The fork's default branch is {default!r} {tracked} — repoint dev to "
-            "the fork's line (old line kept as 'dev-upstream')?",
-            default=True,
-        ).ask():
-            return default
-        return None
+    seed = default or current or ""
+    context = (
+        f"fork's default is {default!r}" if default is not None else "fork unreadable"
+    )
     branch = (
-        questionary.text("fork's dev branch (blank = keep current dev):").ask() or ""
+        questionary.text(
+            f"our dev branch on the fork ({context}; blank = keep current dev):",
+            default=seed,
+        ).ask()
+        or ""
     ).strip()
     return branch or None
 
