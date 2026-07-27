@@ -112,7 +112,7 @@ def _stub(monkeypatch, *, choice, texts, confirm=True):
         for fragment, value in texts.items():
             if fragment in msg:
                 return _Ans(value)
-        return _Ans("")
+        return _Ans(default)  # unanswered prompt = the user pressing Enter
 
     monkeypatch.setattr(repo_ui.questionary, "select", lambda *a, **k: _Ans(choice))
     monkeypatch.setattr(repo_ui.questionary, "text", _text)
@@ -169,7 +169,11 @@ def test_add_existing_forked_same_line_records_no_dev_upstream(tmp_path, monkeyp
     _stub(
         monkeypatch,
         choice=repo_ui._OURS_FORKED,
-        texts={"upstream URL": "https://ex/up.git", "fork (ours) URL": "https://ex/fork.git"},
+        texts={
+            "upstream URL": "https://ex/up.git",
+            "fork (ours) URL": "https://ex/fork.git",
+            "our dev branch on the fork": "main",  # accept the seeded value
+        },
     )
 
     repo_ui._add_existing(store, "Same", "same")
@@ -178,3 +182,54 @@ def test_add_existing_forked_same_line_records_no_dev_upstream(tmp_path, monkeyp
     assert repo.sources["fork-ours"] == "https://ex/fork.git"  # fork still recorded
     assert repo.branches == {"dev": "main"}
     assert "dev-upstream" not in repo.branches
+
+
+def test_fork_dev_is_asked_even_when_the_defaults_match(tmp_path, monkeypatch):
+    """A fork whose HEAD still matches the base is usually just *unconfigured*.
+
+    The fork's default branch is a proxy for our dev line, not the line itself. The
+    short-circuit used to skip the question exactly when the proxy agreed with the
+    base — i.e. where it is least likely to reflect intent — so a fork you had
+    branched away from silently kept the base's line.
+    """
+    store = _store(tmp_path, default_branch="main")  # both remotes default to main
+    _stub(
+        monkeypatch,
+        choice=repo_ui._OURS_FORKED,
+        texts={
+            "upstream URL": "https://ex/up.git",
+            "fork (ours) URL": "https://ex/fork.git",
+            "our dev branch on the fork": "my-line",  # ...but we work elsewhere
+        },
+    )
+
+    repo_ui._add_existing(store, "Branched", "branched")
+
+    repo = store.load("branched")
+    assert repo.branches == {"dev": "my-line", "dev-upstream": "main"}
+
+
+def test_fork_dev_prompt_is_seeded_with_the_forks_default(tmp_path, monkeypatch):
+    """The probe seeds the prompt rather than answering it."""
+    store = _store(tmp_path, default_branch="main")
+    store.broker.remote_default_branches["https://ex/fork.git"] = "fie-main"
+    seen = {}
+    _stub(
+        monkeypatch,
+        choice=repo_ui._OURS_FORKED,
+        texts={"upstream URL": "https://ex/up.git", "fork (ours) URL": "https://ex/fork.git"},
+    )
+    plain_text = repo_ui.questionary.text
+
+    def _spy(msg, default="", **kw):
+        if "our dev branch on the fork" in msg:
+            seen["msg"], seen["default"] = msg, default
+        return plain_text(msg, default=default, **kw)
+
+    monkeypatch.setattr(repo_ui.questionary, "text", _spy)
+
+    repo_ui._add_existing(store, "Seed", "seed")
+
+    assert seen["default"] == "fie-main"  # pre-filled, one keypress to accept
+    assert "fie-main" in seen["msg"]  # and surfaced in the question itself
+    assert store.load("seed").branches == {"dev": "fie-main", "dev-upstream": "main"}
