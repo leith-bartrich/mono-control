@@ -161,23 +161,24 @@ composition — by its meaning it composes against the `upstream` remote
 declare **arbitrary named branches** (free purposes) and reference them explicitly, but
 mono-control standardizes no meaning for them.
 
-**`dev-upstream`'s absence is meaningful — do not fill it in.** mono-control writes it
-*only* in the [fork transition](#sources), and only when the fork's line actually differs
-from the base's. So on a fork-bearing repo the rule reads both ways: `dev-upstream` is present
-**exactly when** the two lines diverge. Its absence therefore says something — that they
-coincide — which is what licenses reading `upstream/<dev>` as the base's line. That is a
-sound derivation, not an assumption that the names happen to match: the authoring flow
-asks, so a repo that got here was checked.
+**An absent purpose means "the remote's default", not "unknown".** That is already how
+`dev` behaves — absent, it resolves to the default branch of whichever remote it composes
+against — and `dev-upstream` inherits it: absent, the base's development line *is* the
+`upstream` remote's default branch. So neither purpose needs a null or empty-string
+sentinel. The two states already say everything there is to say: **absent** follows the
+remote's default, **present** is an explicit override.
 
-Which makes recording `dev-upstream` equal to `dev` "for completeness" actively wrong,
-not merely redundant. It asserts a divergence that doesn't exist, and it destroys the
-signal — you could no longer tell a repo whose lines were compared and found identical
-from one somebody helpfully filled in. Leave it out and let the absence carry the fact.
+That makes hand-filling `dev-upstream` both pointless and misleading. Pointless because
+an absent one already resolves to the upstream's default; misleading because
+mono-control writes it *only* in the [fork transition](#sources), and only where that
+transition repointed `dev` away from a line it had already recorded — so its presence is
+a **signal that a repoint happened**. Writing it yourself fakes that signal without
+adding information. Leave it out.
 
-(One limit, for honesty: absence can *also* mean no base line was ever recorded — a repo
-that had no `dev` at all when its fork was adopted has nothing to preserve. The reading
-above holds wherever `dev` was set before the fork, which the guided flow always does
-unless you deliberately skip it.)
+An upstream with *no* development line is not a case to model — it is degenerate. A repo
+whose HEAD names no existing branch has no commits at all, and an empty repo is nothing
+to fork or to base on. (It is the same unborn-HEAD condition that left a freshly
+`init`-ed bare repo unplaceable until it was given a root commit.)
 
 We deliberately do **not** define `stable` / release / version branches here. Those are
 upstream conventions we don't control, and "stability" is usually expressed as a *tag*
