@@ -100,3 +100,81 @@ def test_prompt_dev_broker_failure_degrades_to_prompt(tmp_path, monkeypatch):
     store = RepoStore(_Boom())
     monkeypatch.setattr(repo_ui.questionary, "text", lambda *a, **k: _Ans("fallback"))
     assert repo_ui._prompt_dev_from_remote(store, "https://example.com/x.git") == "fallback"
+
+
+# --------------------------------------------------------------------------- #
+# Guided add: the three provenance states decide which fields are meaningful
+# --------------------------------------------------------------------------- #
+def _stub(monkeypatch, *, choice, texts, confirm=True):
+    """Stub questionary: one `select` answer, `text` routed by prompt substring."""
+
+    def _text(msg, default="", **kw):
+        for fragment, value in texts.items():
+            if fragment in msg:
+                return _Ans(value)
+        return _Ans("")
+
+    monkeypatch.setattr(repo_ui.questionary, "select", lambda *a, **k: _Ans(choice))
+    monkeypatch.setattr(repo_ui.questionary, "text", _text)
+    monkeypatch.setattr(repo_ui.questionary, "confirm", lambda *a, **k: _Ans(confirm))
+
+
+def test_add_existing_theirs_records_upstream_and_their_dev(tmp_path, monkeypatch):
+    """Consuming someone else's repo: `dev` names their line, `dev-upstream` is redundant."""
+    store = _store(tmp_path, default_branch="main")
+    _stub(monkeypatch, choice=repo_ui._THEIRS, texts={"upstream URL": "https://ex/up.git"})
+
+    repo_ui._add_existing(store, "Up", "up")
+
+    repo = store.load("up")
+    assert repo.sources == {"upstream": "https://ex/up.git"}
+    assert repo.branches == {"dev": "main"}
+
+
+def test_add_existing_ours_records_origin(tmp_path, monkeypatch):
+    store = _store(tmp_path, default_branch="main")
+    _stub(monkeypatch, choice=repo_ui._OURS, texts={"origin URL": "https://ex/mine.git"})
+
+    repo_ui._add_existing(store, "Mine", "mine")
+
+    repo = store.load("mine")
+    assert repo.sources == {"origin": "https://ex/mine.git"}
+    assert repo.branches == {"dev": "main"}
+    assert "dev-upstream" not in repo.branches  # no upstream to have a second line
+
+
+def test_add_existing_forked_points_dev_at_the_fork(tmp_path, monkeypatch):
+    """The bug: `dev` must name the fork's line, with the base's kept as `dev-upstream`."""
+    store = _store(tmp_path, default_branch="main")  # the upstream's line
+    store.broker.remote_default_branches["https://ex/fork.git"] = "fie-main"
+    _stub(
+        monkeypatch,
+        choice=repo_ui._OURS_FORKED,
+        texts={"upstream URL": "https://ex/up.git", "fork (ours) URL": "https://ex/fork.git"},
+    )
+
+    repo_ui._add_existing(store, "Forked", "forked")
+
+    repo = store.load("forked")
+    assert repo.sources == {
+        "upstream": "https://ex/up.git",
+        "fork-ours": "https://ex/fork.git",
+    }
+    assert repo.branches == {"dev": "fie-main", "dev-upstream": "main"}
+
+
+def test_add_existing_forked_same_line_records_no_dev_upstream(tmp_path, monkeypatch):
+    """`dev-upstream` appears only when the fork's line actually differs from the base's."""
+    store = _store(tmp_path, default_branch="main")  # fork's default matches too
+    _stub(
+        monkeypatch,
+        choice=repo_ui._OURS_FORKED,
+        texts={"upstream URL": "https://ex/up.git", "fork (ours) URL": "https://ex/fork.git"},
+    )
+
+    repo_ui._add_existing(store, "Same", "same")
+
+    repo = store.load("same")
+    assert repo.sources["fork-ours"] == "https://ex/fork.git"  # fork still recorded
+    assert repo.branches == {"dev": "main"}
+    assert "dev-upstream" not in repo.branches
