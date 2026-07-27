@@ -35,9 +35,10 @@ def _add(store: RepoStore) -> None:
     """Guided repo creation — walks the user into canonical source/branch values.
 
     Two paths: a **new** repo (init it on a chosen dev branch) or an **existing**
-    one (ours=`origin` / someone-else's=`upstream` + optional `fork-ours`, with the
-    remote's default branch probed and offered for `dev`). Still permissive — the
-    prompts only *suggest* the governed names.
+    one, whose three provenance states — theirs / ours / ours-forked-from-theirs —
+    decide which sources and branches are even meaningful (see :func:`_add_existing`).
+    The remote's default branch is probed and offered for `dev` throughout. Still
+    permissive — the prompts only *suggest* the governed names.
     """
     name = (questionary.text("name:").ask() or "").strip()
     if not name:
@@ -76,31 +77,59 @@ def _add_new(store: RepoStore, name: str, slug: str) -> None:
     repo_ops.render_outcomes(f"init {resolved_slug}", report.outcomes, console=console)
 
 
+# The three provenance states the source vocabulary can express, asked directly
+# rather than as "ours?" plus a follow-up modifier. The second and third both set
+# `upstream`, but they are different intents and they ask for different things next.
+_THEIRS = "someone else's — we consume it"
+_OURS = "ours — we originated it"
+_OURS_FORKED = "ours — a fork of someone else's"
+
+
 def _add_existing(store: RepoStore, name: str, slug: str) -> None:
+    """Author an existing repo's sources + branches from its provenance.
+
+    Which fields get asked for falls out of the answer: ``dev-upstream`` is
+    meaningless without an upstream and redundant when we merely consume one, so it
+    is reached only on the forked path (see ``docs/design/layers/data/repo.md``).
+    """
     choice = questionary.select(
-        "Is this ours, or based on someone else's?",
-        choices=["ours", "someone else's (upstream)"],
+        "Where does this repo come from?", choices=[_THEIRS, _OURS, _OURS_FORKED]
     ).ask()
     if choice is None:
         return
-    sources: dict[str, str] = {}
-    if choice == "ours":
+
+    if choice == _OURS:
         url = (questionary.text("origin URL:").ask() or "").strip()
         if not url:
             return
-        sources["origin"] = url
-    else:
-        url = (questionary.text("upstream URL:").ask() or "").strip()
-        if not url:
-            return
-        sources["upstream"] = url
-        if questionary.confirm("Do you maintain your own fork?", default=False).ask():
-            fork_url = (questionary.text("fork (ours) URL:").ask() or "").strip()
-            if fork_url:
-                sources["fork-ours"] = fork_url
+        _create(store, name, slug, {source_names.ORIGIN: url}, url)
+        return
 
-    dev = _prompt_dev_from_remote(store, url)
-    branches = {"dev": dev} if dev else {}
+    url = (questionary.text("upstream URL:").ask() or "").strip()
+    if not url:
+        return
+    if choice == _THEIRS:
+        # `dev` names the upstream's own line; there is no second line to record.
+        _create(store, name, slug, {source_names.UPSTREAM: url}, url)
+        return
+
+    fork_url = (questionary.text("fork (ours) URL:").ask() or "").strip()
+    if not fork_url:
+        return
+    # Create upstream-only first, then run the *governed* transition, so this path
+    # produces exactly what `manage -> add fork` does: `dev` repointed to the fork's
+    # line and the base's line preserved as `dev-upstream`. Hand-writing `fork-ours`
+    # here is what let `dev` keep naming the upstream's branch.
+    _create(store, name, slug, {source_names.UPSTREAM: url}, url)
+    _adopt_fork_for(store, slug, fork_url)
+
+
+def _create(
+    store: RepoStore, name: str, slug: str, sources: dict[str, str], dev_from: str
+) -> None:
+    """Create the def, probing ``dev_from`` for the dev branch."""
+    dev = _prompt_dev_from_remote(store, dev_from)
+    branches = {source_names.DEV: dev} if dev else {}
     store.create(Repo(version=1, slug=slug, name=name, sources=sources, branches=branches))
     console.print(f"[green]created[/green] {slug}")
 
@@ -190,9 +219,30 @@ def _add_fork(store: RepoStore, repo: Repo) -> None:
     if not url:
         return
     dev_branch = _prompt_fork_dev(store, repo, url) if purpose == "ours" else None
+    _adopt_fork(store, repo.slug, url, purpose=purpose, dev_branch=dev_branch)
+
+
+def _adopt_fork_for(store: RepoStore, slug: str, url: str) -> None:
+    """Run the ours-fork transition on a just-created upstream repo.
+
+    Shares :func:`repo_ops.adopt_fork` with ``manage -> add fork`` so creating a
+    forked repo and forking an existing one land in the same state.
+    """
+    try:
+        repo = store.load(slug)
+    except ConfigError as e:
+        console.print(f"[red]error:[/red] {e}")
+        return
+    _adopt_fork(store, slug, url, purpose="ours", dev_branch=_prompt_fork_dev(store, repo, url))
+
+
+def _adopt_fork(
+    store: RepoStore, slug: str, url: str, *, purpose: str, dev_branch: str | None
+) -> None:
+    """Apply the governed transition and report what it changed."""
     try:
         result = repo_ops.adopt_fork(
-            repo.slug,
+            slug,
             url,
             purpose=purpose,
             dev_branch=dev_branch,
