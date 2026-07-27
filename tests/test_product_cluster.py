@@ -54,6 +54,25 @@ def test_init_creates_offline_repo_with_aspect(broker_env):
     assert GitRepo(env.off / "fresh").slug() == "fresh"
 
 
+def test_init_then_place_succeeds(broker_env):
+    """A brand-new cluster must be placeable, not just creatable.
+
+    `git init --bare` leaves HEAD on an *unborn* branch, which
+    `git worktree add <path> HEAD` cannot resolve — so `init` then `place` failed with
+    `fatal: invalid reference: HEAD`, leaving a cluster that could be created and never
+    used. `init` now writes an empty root commit.
+    """
+    env = broker_env
+    assert _invoke(env, ["init", "Draggr", "--slug", "draggr"]).exit_code == 0
+    assert GitRepo(env.off / "draggr").resolve_ref("HEAD") is not None  # HEAD resolves
+
+    res = _invoke(env, ["mat", "moveto", "draggr"])
+    assert res.exit_code == 0, res.output
+    placed = env.ws / "products" / "draggr"
+    assert (placed / ".git").exists()
+    assert GitRepo(placed).slug() == "draggr"
+
+
 def test_init_derives_slug_from_name(broker_env):
     env = broker_env
     result = _invoke(env, ["init", "My Cluster"])

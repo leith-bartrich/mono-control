@@ -117,12 +117,33 @@ def test_scan_reports_dirty(tmp_path):
     assert inv.repos["alpha"].dirty is True
 
 
-def test_init_only_bare_has_no_commit(tmp_path):
+def test_init_only_bare_is_offline_with_a_root_commit(tmp_path):
+    """``init`` writes an empty root commit, so a fresh bare repo is placeable.
+
+    Left commit-less, its HEAD is an unborn branch that ``git worktree add`` cannot
+    resolve — see :meth:`broker_shim.GitRepo.write_root_commit`.
+    """
     off = tmp_path / "off"
     off.mkdir()
     (tmp_path / "ws").mkdir()
-    init(off / "fresh", profile=PROFILE, slug="fresh")  # empty bare repo, no worktree
+    init(off / "fresh", profile=PROFILE, slug="fresh")  # bare repo, no worktree
     inv = scan(_broker(tmp_path), tmp_path / "ws", off)
     assert inv.repos["fresh"].state == "offline"
-    assert inv.repos["fresh"].commit is None
+    assert inv.repos["fresh"].commit is not None
     assert GitRepo(off / "fresh").is_bare_repository()
+
+
+def test_commitless_bare_scans_with_no_commit(tmp_path):
+    """A bare repo that *is* commit-less still scans cleanly (commit is None).
+
+    mono-control's own ``init`` no longer produces one, but a repo cloned from an empty
+    remote — or created outside the tool — can be, and the scanner must not choke.
+    """
+    off = tmp_path / "off"
+    off.mkdir()
+    (tmp_path / "ws").mkdir()
+    run_git(["init", "--bare", str(off / "empty")])
+    run_git(["config", "mono-control.slug", "empty"], cwd=off / "empty")
+    inv = scan(_broker(tmp_path), tmp_path / "ws", off)
+    assert inv.repos["empty"].state == "offline"
+    assert inv.repos["empty"].commit is None
