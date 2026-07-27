@@ -36,10 +36,11 @@ document:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "members": {
     "<repo-slug>": { "location": "<subdir under mono-work/>", "role": "dev" }
-  }
+  },
+  "requires": ["<cluster-slug>"]
 }
 ```
 
@@ -57,10 +58,48 @@ document:
   Role is the field a future state conform (`conform <state>`) keys on to decide
   *which* members advance and *how*. For now it is recorded but does not yet drive ref
   selection — applying the layout is placement-only.
+- **requires** — other **product clusters** that must be active alongside this one.
+  A statement of *co-activation*, not inclusion: it carries no location, no ref, and
+  imports no members, because the required cluster owns its own arrangement. Added in
+  **v2**; a v1 document migrates up with an empty set. See
+  [composition](composition.md).
 
 Provenance (do we own / fork / merely consume a repo) is **not** a layout field: a
 fork is already expressible as an `upstream` entry in the repo def's named
 [sources](../../data/repo.md), so the layout does not re-declare it.
+
+## `location` is a build-interface contract
+
+Nothing in mono-control makes a placed worktree the thing another member *builds
+against*. Placement puts source at a path; what consumes it is entirely the
+members' own business.
+
+That is not an oversight — it is forced. Linking a member's build to a sibling
+worktree means editing that member's build configuration, and mono-control
+[does not look inside the repos it manages](../../../../../README.md). So the
+linking, if it happens at all, is done by the member itself: a relative path in its
+own dependency declaration, pointing at where the layout puts its sibling.
+
+Which quietly makes `location` **part of a contract mono-control cannot see**. A
+member's build may encode `../<sibling-location>`; changing that sibling's
+`location` then breaks the build, and nothing here can warn you. Treat a `location`
+that another member's build references as load-bearing, and prefer adding a member
+at a new location over relocating one.
+
+The live `pc-ltx2` cluster shows the unlinked default: `ltx2-61df` is placed at
+`mono-work/ltx-2`, and the member that depends on LTX-2 still resolves it from a
+git URL in its own lockfile — a different repository, even. The placed worktree is
+read by humans, not by the build.
+
+Two consequences worth stating:
+
+- A `dep` member is **source you read but do not author**, not an artifact you
+  consume. Consuming a *built* product is not a layout concern at all — see
+  [composition](composition.md#the-two-planes).
+- The `dev ⊔ dep = dev` join that [composition](composition.md#the-merge) defines
+  for co-active clusters is correct by design but **inert** until a member's build
+  references the placed worktree. Like `role` itself, it is recorded ahead of the
+  machinery that would give it teeth.
 
 ## How it's applied
 

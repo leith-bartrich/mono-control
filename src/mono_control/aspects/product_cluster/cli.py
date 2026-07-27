@@ -56,6 +56,12 @@ _ALLOW_DIRTY = typer.Option(
     False, "--allow-dirty", help="Proceed even if a product cluster has uncommitted changes."
 )
 
+_ACTIVATE_REQUIRED = typer.Option(
+    False,
+    "--activate-required",
+    help="Also place clusters named by `requires` that aren't materialized yet.",
+)
+
 
 def _app(ctx: typer.Context) -> AppContext:
     return ctx.obj
@@ -77,8 +83,13 @@ def _exit_unless(ok: bool) -> None:
 
 
 def _allow(flag: bool):
-    """Map ``--allow-dirty`` to an ``on_dirty`` callback (None gates normally)."""
-    return (lambda _dirty: True) if flag else None
+    """Map an opt-in flag to a gate callback (``None`` gates normally).
+
+    Shared by ``--allow-dirty`` → ``on_dirty`` and ``--activate-required`` →
+    ``on_missing_required``: both gates ask the caller to supply intent, and on the
+    scriptable surface intent *is* the flag.
+    """
+    return (lambda _items: True) if flag else None
 
 
 def _resolve(ctx: typer.Context, query: str, *, slug_only: bool) -> Repo:
@@ -424,15 +435,27 @@ def conform_relayout(
         None, help="Cluster name or slug (default: the sole materialized one)."
     ),
     allow_dirty: bool = _ALLOW_DIRTY,
+    activate_required: bool = _ACTIVATE_REQUIRED,
 ) -> None:
     """Reconcile the workspace to a cluster's layout — the core verb.
 
-    Pulls in members missing from the workspace, retires ones no longer in the layout,
-    and leaves already-correct repos untouched (one exclusive reconcile, no teardown).
+    Pulls in members missing from the workspace, retires ones no longer claimed by an
+    active cluster, and leaves already-correct repos untouched (one exclusive
+    reconcile, no teardown).
+
+    Clusters named by the layout's `requires` are co-activated and their members
+    merged in. They are always acquired; placing one that has no worktree yet needs
+    `--activate-required`.
     """
     repo = _resolve_cluster(ctx, name_or_slug)
     _exit_unless(
-        actions.relayout(repo, store=_store(ctx), console=console, on_dirty=_allow(allow_dirty))
+        actions.relayout(
+            repo,
+            store=_store(ctx),
+            console=console,
+            on_dirty=_allow(allow_dirty),
+            on_missing_required=_allow(activate_required),
+        )
     )
 
 
@@ -455,17 +478,28 @@ def conform_swap(
     name_or_slug: str,
     slug_only: bool = _SLUG_FLAG,
     allow_dirty: bool = _ALLOW_DIRTY,
+    activate_required: bool = _ACTIVATE_REQUIRED,
 ) -> None:
     """Switch to a different cluster from a clean slate — `clear` then `relayout`.
 
     The target is acquired up front (fail-early), so an unreachable cluster aborts
-    before anything is torn down; the `clear` removes the current cluster before the
-    new one lands (no two-cluster window). Placement only, no refs.
+    before anything is torn down; the `clear` removes the current arrangement before
+    the new one lands. Placement only, no refs.
+
+    A target that `requires` other clusters activates them too, so the result may hold
+    more than one — and since `clear` leaves nothing placed, that needs
+    `--activate-required`.
     """
     repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
     _require_aspect(repo)
     _exit_unless(
-        actions.swap(repo, store=_store(ctx), console=console, on_dirty=_allow(allow_dirty))
+        actions.swap(
+            repo,
+            store=_store(ctx),
+            console=console,
+            on_dirty=_allow(allow_dirty),
+            on_missing_required=_allow(activate_required),
+        )
     )
 
 

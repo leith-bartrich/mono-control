@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import ValidationError
+from pydantic import ValidationError, field_serializer
 
 from mono_control.base_models import StrictModel, VersionedModel, VersionError
 from mono_control.broker import BrokerProtocol
@@ -64,17 +64,35 @@ class LayoutMember(StrictModel):
     role: Literal["dev", "dep"]
 
 
+def _v1_to_v2(data: dict) -> dict:
+    """v1 → v2: add the empty ``requires`` set (co-activation was not expressible)."""
+    return {**data, "version": 2, "requires": []}
+
+
 class ClusterLayout(VersionedModel):
     """A product cluster's single authored arrangement of member repos.
 
     ``members`` is keyed by workspace [slug]; the key set is the cluster's
-    membership. See
-    ``docs/design/layers/repo-aspects/product-cluster/layout.md``.
+    membership.
+
+    ``requires`` names other **product clusters** that must be active alongside this
+    one — a statement of *co-activation*, not inclusion: it carries no location, no
+    ref, and imports no members. The required cluster owns its own arrangement. See
+    ``docs/design/layers/repo-aspects/product-cluster/composition.md``.
+
+    See ``docs/design/layers/repo-aspects/product-cluster/layout.md``.
     """
 
-    CURRENT_VERSION = 1
-    version: Literal[1] = 1
+    CURRENT_VERSION = 2
+    MIGRATIONS = {1: _v1_to_v2}
+    version: Literal[2] = 2
     members: dict[str, LayoutMember] = {}  # slug -> member
+    requires: set[str] = set()  # co-active cluster slugs
+
+    @field_serializer("requires")
+    def _sort_requires(self, value: set[str]) -> list[str]:
+        # Stable JSON output so committed layouts don't churn between writes.
+        return sorted(value)
 
 
 def load_cluster_layout(data: dict) -> ClusterLayout:
@@ -124,7 +142,7 @@ class ClusterLayoutStore:
         """Load the layout, or a fresh empty one if none is authored yet."""
         result = self.broker.read_layout(self.cluster_slug)
         if not result.exists or result.layout is None:
-            return ClusterLayout(version=1)
+            return ClusterLayout()
         return load_cluster_layout(result.layout)
 
     def save(self, layout: ClusterLayout) -> None:

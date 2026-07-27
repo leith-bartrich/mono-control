@@ -12,7 +12,9 @@ deliberately *non-opaque*: mono-control knows its internal layout.
 Think of it as the artifact-domain analog of a **Visual Studio solution**: the
 member repos are its "projects," and the cluster organizes them so some number of
 related artifacts can be configured, developed, built, and packaged together. A
-cluster expresses **one** such arrangement.
+cluster expresses **one** such arrangement — and today a workspace holds exactly one
+cluster at a time. [Composition](composition.md) records the model for relaxing that,
+and why a cluster's *products* are never another cluster's members.
 
 Its content lives — by aspect convention — under a `product-cluster/` subdirectory
 inside the cluster repo, so multiple aspects on one repo stay out of each other's
@@ -150,3 +152,9 @@ Still open:
   locked yet (no reserved source/branch names). See [conform](conform.md).
 - The `<name>` subdir-derivation rule (and whether slugs carry a uniqueness suffix)
   — still TBD.
+- **[Composition](composition.md)** — more than one cluster active at once, for a
+  library-shaped cluster several others depend on. The model is designed
+  (co-activation rather than inclusion, unordered closure, a commutative merge) but
+  nothing is implemented, and it has open ends of its own: what activates a required
+  cluster, whether `requires` belongs in the layout document, and how a shared member
+  survives one of its claimants being dropped.

@@ -40,6 +40,22 @@ def _confirm_dirty(dirty: list[str]) -> bool:
     )
 
 
+def _confirm_required(missing: list[str]) -> bool:
+    """`on_missing_required` callback — prompt to also place co-activated clusters.
+
+    The scriptable surface expresses this intent as `--activate-required`; here the
+    same choice is surfaced as a question, which is the whole point of the two-surface
+    split. Defaults to yes: the user asked to conform to a cluster that *says* it
+    needs these, so placing them is the expected outcome rather than the surprising one.
+    """
+    return bool(
+        questionary.confirm(
+            f"cluster(s) {', '.join(missing)} are required but not placed — place them too?",
+            default=True,
+        ).ask()
+    )
+
+
 def manage(store: RepoStore) -> None:
     """Run the interactive product-cluster manager until the user exits."""
     while True:
@@ -152,6 +168,18 @@ def _conform_menu(store: RepoStore, repo) -> None:
     if action in (None, _BACK):
         return
     if action == "relayout":
-        actions.relayout(repo, store=store, console=console, on_dirty=_confirm_dirty)
+        actions.relayout(
+            repo,
+            store=store,
+            console=console,
+            on_dirty=_confirm_dirty,
+            on_missing_required=_confirm_required,
+        )
     elif action == "swap to":
-        actions.swap(repo, store=store, console=console, on_dirty=_confirm_dirty)
+        actions.swap(
+            repo,
+            store=store,
+            console=console,
+            on_dirty=_confirm_dirty,
+            on_missing_required=_confirm_required,
+        )

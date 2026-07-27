@@ -20,12 +20,17 @@ mproj control product-cluster conform artifact-version <name>  # target: a snaps
 ### conform relayout \[pc]
 
 The **core verb**: incrementally reconcile the workspace to a cluster's
-[layout](layout.md) — pull in members that are missing, retire members no longer in the
-layout, and **leave everything already correct untouched**. It is a single exclusive
-reconcile (`pre_clear=True` over `{cluster ∪ members}`): no teardown, minimal churn. Reach
-for it after editing a layout, or any time you want the workspace to match what the cluster
-declares. `[pc]` defaults to the sole materialized cluster; naming one that isn't placed
-yet materializes it first.
+[layout](layout.md) — pull in members that are missing, retire members no longer claimed
+by an active cluster, and **leave everything already correct untouched**. It is a single
+exclusive reconcile (`pre_clear=True` over `{active clusters ∪ merged members}`): no
+teardown, minimal churn. Reach for it after editing a layout, or any time you want the
+workspace to match what the cluster declares. `[pc]` defaults to the sole materialized
+cluster; naming one that isn't placed yet materializes it first.
+
+The target set is the [co-activation closure](composition.md) from `[pc]`, not one
+layout: a cluster that declares `requires` brings those clusters' members in too, merged
+commutatively. Required clusters are always acquired; placing one that has no worktree
+yet needs `--activate-required` (or a *yes* to the manager's prompt).
 
 ### conform clear
 
@@ -45,10 +50,14 @@ cluster has uncommitted changes.
 
 Switch to a **different** cluster from a clean slate — **`clear` then `relayout <pc>`**,
 with `<pc>` **acquired up front (fail-early)** so an unreachable cluster aborts *before*
-anything is torn down. The `clear` removes the current cluster (and everything else)
-*before* the new one lands, so two clusters are never placed at once — a guarantee
-`relayout` alone can't make while *switching*. (For the *same* cluster there's no switch
-and no window, so just use `relayout`.) Placement only, no refs.
+anything is torn down. The `clear` removes the current arrangement (and everything else)
+*before* the new one lands, so nothing from the previous arrangement survives into the
+new one — a guarantee `relayout` alone can't make while *switching*. (For the *same*
+cluster there's no switch and no window, so just use `relayout`.) Placement only, no refs.
+
+What swap no longer guarantees is that only *one* cluster ends up placed: if `<pc>`
+declares [`requires`](composition.md), its co-active clusters are laid out too. And since
+`clear` leaves nothing placed, that always needs `--activate-required`.
 
 ### conform \<state>  *(draft concept)*
 

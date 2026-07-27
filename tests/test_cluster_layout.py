@@ -59,7 +59,7 @@ def _make_cluster(env, tmp_path: Path, *, slug="cluster1", name="cluster1") -> R
 # --------------------------------------------------------------------------- #
 def test_layout_round_trip():
     layout = ClusterLayout(
-        version=1, members={"m1": LayoutMember(location="src/m1", role="dev")}
+        version=2, members={"m1": LayoutMember(location="src/m1", role="dev")}
     )
     again = ClusterLayout.load(json.loads(layout.model_dump_json()))
     assert again == layout
@@ -69,6 +69,24 @@ def test_layout_round_trip():
 def test_bad_role_rejected():
     with pytest.raises(ValidationError):
         LayoutMember(location="a", role="prod")  # not dev|dep
+
+
+def test_v1_migrates_to_v2_with_empty_requires():
+    """A pre-composition layout loads unchanged, gaining an empty `requires`."""
+    loaded = ClusterLayout.load(
+        {"version": 1, "members": {"m1": {"location": "src/m1", "role": "dep"}}}
+    )
+    assert loaded.version == 2
+    assert loaded.requires == set()
+    assert loaded.members["m1"].location == "src/m1"
+
+
+def test_requires_round_trips_and_serializes_sorted():
+    layout = ClusterLayout(version=2, requires={"pc-b", "pc-a"})
+    dumped = json.loads(layout.model_dump_json())
+    # Sorted so a committed layout doesn't churn between writes.
+    assert dumped["requires"] == ["pc-a", "pc-b"]
+    assert ClusterLayout.load(dumped) == layout
 
 
 # --------------------------------------------------------------------------- #
@@ -82,7 +100,7 @@ def test_store_save_then_load(broker_env, tmp_path):
     assert store.load_or_empty().members == {}
 
     layout = ClusterLayout(
-        version=1, members={"m1": LayoutMember(location="a", role="dep")}
+        version=2, members={"m1": LayoutMember(location="a", role="dep")}
     )
     store.save(layout)
     assert store.exists()
@@ -176,7 +194,7 @@ def test_layout_validate_flags_unknown_member(broker_env, tmp_path):
     _make_cluster(env, tmp_path)
     # Author a layout referencing a non-existent member, directly via the store.
     ClusterLayoutStore(env.broker, "cluster1").save(
-        ClusterLayout(version=1, members={"ghost": LayoutMember(location="x", role="dev")})
+        ClusterLayout(version=2, members={"ghost": LayoutMember(location="x", role="dev")})
     )
     res = _invoke(env, ["layout", "validate", "--cluster", "cluster1"])
     assert res.exit_code != 0
