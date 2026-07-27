@@ -25,15 +25,24 @@ def _origin(path: Path, branch: str = "main") -> str:
     return run_git(["rev-parse", "HEAD"], cwd=path)
 
 
-def _cluster_origin(path: Path, members: dict, branch: str = "main") -> str:
-    """A cluster origin carrying a committed product-cluster/default-layout.json."""
+def _cluster_origin(
+    path: Path, members: dict, branch: str = "main", requires: list[str] | None = None
+) -> str:
+    """A cluster origin carrying a committed product-cluster/default-layout.json.
+
+    Writes a **v1** document unless ``requires`` is given, so the common case keeps
+    exercising the v1 → v2 migration on the way in.
+    """
     path.mkdir(parents=True, exist_ok=True)
     run_git(["init", "--initial-branch", branch, str(path)])
     layout_dir = path / "product-cluster"
     layout_dir.mkdir()
-    (layout_dir / "default-layout.json").write_text(
-        json.dumps({"version": 1, "members": members}, indent=2) + "\n"
+    doc = (
+        {"version": 2, "members": members, "requires": requires}
+        if requires is not None
+        else {"version": 1, "members": members}
     )
+    (layout_dir / "default-layout.json").write_text(json.dumps(doc, indent=2) + "\n")
     run_git(["add", "."], cwd=path)
     run_git(["commit", "-m", "layout"], cwd=path)
     return run_git(["rev-parse", "HEAD"], cwd=path)
@@ -257,3 +266,128 @@ def test_conform_clear_allow_dirty_still_guards_uncommitted_work(broker_env, tmp
     assert res2.exit_code == 0, res2.output
     assert not placed.exists()
     assert GitRepo(env.off / "pc1").is_bare_repository()
+
+
+# --------------------------------------------------------------------------- #
+# Composition — co-activation via `requires`
+# --------------------------------------------------------------------------- #
+def _members(spec: dict[str, tuple[str, str]]) -> dict:
+    return {slug: {"location": loc, "role": role} for slug, (loc, role) in spec.items()}
+
+
+def _two_cluster_env(env, tmp_path, *, lib_members, app_members, requires=("lib",)):
+    """Seed an `app` cluster that requires a `lib` cluster, plus their members."""
+    for slug in {*lib_members, *app_members}:
+        _origin(tmp_path / f"{slug}o")
+        _seed(env, slug, tmp_path / f"{slug}o")
+    _cluster_origin(tmp_path / "libo", _members(lib_members), requires=[])
+    _cluster_origin(tmp_path / "appo", _members(app_members), requires=list(requires))
+    _seed(env, "lib", tmp_path / "libo", aspects={"product-cluster"})
+    _seed(env, "app", tmp_path / "appo", aspects={"product-cluster"})
+
+
+def test_relayout_refuses_to_place_an_unplaced_required_cluster(broker_env, tmp_path):
+    """Acquiring is free and automatic; *placing* needs stated intent."""
+    env = broker_env
+    _two_cluster_env(
+        env,
+        tmp_path,
+        lib_members={"shared": ("libs/shared", "dev")},
+        app_members={"a1": ("src/a1", "dev")},
+    )
+    res = _invoke(env, ["conform", "swap", "app"])
+    assert res.exit_code != 0
+    assert "lib" in res.output
+    # Acquired anyway — the bare repo is there, just not placed.
+    assert GitRepo(env.off / "lib").is_bare_repository()
+    assert not (env.ws / "products" / "lib").exists()
+
+
+def test_relayout_activates_required_cluster_when_asked(broker_env, tmp_path):
+    env = broker_env
+    _two_cluster_env(
+        env,
+        tmp_path,
+        lib_members={"shared": ("libs/shared", "dev")},
+        app_members={"a1": ("src/a1", "dev")},
+    )
+    res = _invoke(env, ["conform", "swap", "app", "--activate-required"])
+    assert res.exit_code == 0, res.output
+    # Both clusters placed, and the union of their members laid out.
+    assert (env.ws / "products" / "app" / ".git").exists()
+    assert (env.ws / "products" / "lib" / ".git").exists()
+    assert GitRepo(env.ws / "src" / "a1").slug() == "a1"
+    assert GitRepo(env.ws / "libs" / "shared").slug() == "shared"
+
+
+def test_shared_member_in_agreement_is_placed_once(broker_env, tmp_path):
+    """The library case: both clusters name the same member, one worktree results."""
+    env = broker_env
+    _two_cluster_env(
+        env,
+        tmp_path,
+        lib_members={"shared": ("libs/shared", "dev")},
+        app_members={"shared": ("libs/shared", "dep")},
+    )
+    res = _invoke(env, ["conform", "swap", "app", "--activate-required"])
+    assert res.exit_code == 0, res.output
+    assert GitRepo(env.ws / "libs" / "shared").slug() == "shared"
+    # dev ⊔ dep = dev, and the override is surfaced rather than silent.
+    assert "dev override" in res.output
+
+
+def test_location_conflict_between_co_active_clusters_refuses(broker_env, tmp_path):
+    env = broker_env
+    _two_cluster_env(
+        env,
+        tmp_path,
+        lib_members={"shared": ("libs/shared", "dep")},
+        app_members={"shared": ("vendor/shared", "dep")},
+    )
+    res = _invoke(env, ["conform", "swap", "app", "--activate-required"])
+    assert res.exit_code != 0
+    assert "conflicting location" in res.output
+    # Nothing was laid out on an unsatisfiable merge.
+    assert not (env.ws / "libs" / "shared").exists()
+    assert not (env.ws / "vendor" / "shared").exists()
+
+
+def test_requires_an_undeclared_cluster_refuses(broker_env, tmp_path):
+    env = broker_env
+    _origin(tmp_path / "a1o")
+    _seed(env, "a1", tmp_path / "a1o")
+    _cluster_origin(tmp_path / "appo", {"a1": {"location": "src/a1", "role": "dev"}},
+                    requires=["nope"])
+    _seed(env, "app", tmp_path / "appo", aspects={"product-cluster"})
+    res = _invoke(env, ["conform", "swap", "app", "--activate-required"])
+    assert res.exit_code != 0
+    assert "nope" in res.output
+
+
+def test_dropping_one_claimant_keeps_a_still_claimed_member(broker_env, tmp_path):
+    """A shared member survives when one of its two claimants leaves the active set.
+
+    `pre_clear` retires whatever the target doesn't name, and the target names the
+    *union* of every active cluster's members — so "still claimed by something active"
+    is already the deciding question. Only members nobody active claims are retired.
+    """
+    env = broker_env
+    _two_cluster_env(
+        env,
+        tmp_path,
+        lib_members={"shared": ("libs/shared", "dep"), "l1": ("libs/l1", "dev")},
+        app_members={"shared": ("libs/shared", "dev"), "a1": ("src/a1", "dev")},
+    )
+    assert _invoke(env, ["conform", "swap", "app", "--activate-required"]).exit_code == 0
+
+    # Drop `app` from the active set by conforming to `lib` alone (it requires nothing).
+    res = _invoke(env, ["conform", "relayout", "lib"])
+    assert res.exit_code == 0, res.output
+
+    # `shared` is still claimed by lib — kept, in the same place.
+    assert GitRepo(env.ws / "libs" / "shared").slug() == "shared"
+    assert GitRepo(env.ws / "libs" / "l1").slug() == "l1"
+    # `a1` was only ever app's, and app itself is gone — both retired, bares survive.
+    assert not (env.ws / "src" / "a1").exists()
+    assert not (env.ws / "products" / "app").exists()
+    assert GitRepo(env.off / "a1").is_bare_repository()

@@ -24,7 +24,9 @@ from mono_control.layout_target import (
 from mono_control.on_disk import scan
 
 from ..registry import discover_repos
+from . import composition
 from .cluster_layout import (
+    ClusterLayout,
     ClusterLayoutError,
     ClusterLayoutStore,
     require_cluster_present,
@@ -135,34 +137,18 @@ def clear(
     return apply(LayoutTarget(pre_clear=True, targets={}), store=store, console=console)
 
 
-def relayout(
-    repo: Repo,
-    *,
-    store: RepoStore,
-    console: Console,
-    on_dirty: Callable[[list[str]], bool] | None = None,
-) -> bool:
-    """Incrementally reconcile the workspace to ``repo``'s layout — the core verb.
+def _read_layout(repo: Repo, *, store: RepoStore, console: Console):
+    """Acquire ``repo`` if absent, then read its layout — or ``None`` if unreadable.
 
-    Places members that are missing, retires ones no longer in the layout, and leaves
-    already-correct repos untouched (one exclusive ``pre_clear`` reconcile). The target
-    cluster is *kept*, so its own dirtiness never gates — editing a layout then
-    re-laying-it-out is the normal case, and relayout reads its working-tree layout.
+    Acquiring is free (a bare clone, no worktree) and makes an unreachable remote fail
+    here rather than halfway through a reconcile. Reading tolerates an *offline*
+    cluster: the layout comes from the bare repo's HEAD blob when there's no worktree.
     """
-    # Gate only the clusters this reconcile would retire: everything dirty *except* the
-    # target (which stays placed).
-    dirty = [s for s in dirty_clusters(store) if s != repo.slug]
-    if not _gate(dirty, console, on_dirty):
-        return False
-
-    # Ensure the cluster is present so its layout is readable; acquire only if absent
-    # (no churn for the common already-present case).
     if repo.slug not in scan(store.broker, paths.WORK_DIR, paths.BARE_DIR).repos:
         src = repo_ops.acquire({repo.slug}, broker=store.broker)
         repo_ops.render_outcomes("acquire", src.outcomes, console=console)
         if not src.ok:
-            return False
-
+            return None
     try:
         require_cluster_present(
             store.broker,
@@ -171,13 +157,106 @@ def relayout(
             bare_root=paths.BARE_DIR,
             require_materialized=False,
         )
-        layout = ClusterLayoutStore(store.broker, repo.slug).load_or_empty()
+        return ClusterLayoutStore(store.broker, repo.slug).load_or_empty()
     except ClusterLayoutError as e:
         _err(console, e)
+        return None
+
+
+def relayout(
+    repo: Repo,
+    *,
+    store: RepoStore,
+    console: Console,
+    on_dirty: Callable[[list[str]], bool] | None = None,
+    on_missing_required: Callable[[list[str]], bool] | None = None,
+) -> bool:
+    """Reconcile the workspace to the layouts of ``repo`` and everything it requires.
+
+    The core verb. Resolves the co-activation closure from ``repo`` (see
+    :mod:`.composition`), merges the active clusters' members into one arrangement,
+    and applies it as a single exclusive ``pre_clear`` reconcile: missing members are
+    placed, ones no longer claimed by any active cluster are retired, and already
+    correct repos are left untouched.
+
+    Ordering never enters. The closure is a fixpoint over a visited set (so a
+    ``requires`` cycle just means those clusters are always co-active) and the merge
+    is commutative, so the result does not depend on which cluster was named.
+
+    A required cluster is always **acquired** — free, and it fails early. Whether its
+    *worktree* is then placed is an intent question, so it is the caller's: with no
+    ``on_missing_required`` the reconcile refuses and says which clusters are missing
+    (the scriptable default); the callback opts in.
+    """
+    known = {r.slug: r for r in discover_repos(store, ASPECT)}
+
+    layouts: dict[str, ClusterLayout] = {}
+    unknown: list[str] = []
+
+    def read(slug: str) -> ClusterLayout | None:
+        target = known.get(slug)
+        if target is None:
+            unknown.append(slug)
+            return None
+        layout = _read_layout(target, store=store, console=console)
+        if layout is not None:
+            layouts[slug] = layout
+        return layout
+
+    closure = composition.resolve_closure(repo.slug, read)
+
+    if unknown:
+        _err(
+            console,
+            f"required cluster(s) not declared as {ASPECT} in config: "
+            f"{', '.join(sorted(set(unknown)))}",
+        )
+        return False
+    if closure.unresolved:
+        _err(console, f"could not read layout for: {', '.join(closure.unresolved)}")
+        return False
+    if closure.cycles:
+        console.print(
+            f"[yellow]note:[/yellow] `requires` cycle among "
+            f"{', '.join(closure.cycles)} — they can only ever be active together, "
+            f"which usually means they are one cluster"
+        )
+
+    # Gate only the clusters this reconcile would retire: everything dirty that isn't
+    # staying active.
+    active = set(closure.active)
+    if not _gate([s for s in dirty_clusters(store) if s not in active], console, on_dirty):
         return False
 
-    targets = {repo.slug: LayoutTargetPresentAsIs(location=aspect_location(repo))}
-    for slug, member in layout.members.items():
+    merge = composition.merge_members(layouts)
+    for join in merge.joins:
+        console.print(f"[yellow]dev override:[/yellow] {join.describe()}")
+    if not merge.ok:
+        for conflict in merge.conflicts:
+            _err(console, conflict.describe())
+        return False
+
+    inv = scan(store.broker, paths.WORK_DIR, paths.BARE_DIR)
+    materialized = {s for s, o in inv.repos.items() if o.state == "materialized"}
+    missing = composition.missing_worktrees(
+        (s for s in closure.active if s != repo.slug), materialized
+    )
+    if missing:
+        if on_missing_required is None:
+            _err(
+                console,
+                f"required cluster(s) not placed ({', '.join(missing)}); place them "
+                f"first (`mat moveto`) or re-run opting in to placing them",
+            )
+            return False
+        if not on_missing_required(list(missing)):
+            return False
+
+    targets = {
+        slug: LayoutTargetPresentAsIs(location=aspect_location(known[slug]))
+        for slug in closure.active
+    }
+    for slug, member in merge.members.items():
         targets[slug] = LayoutTargetPresentAsIs(location=member.location)
     return apply(LayoutTarget(pre_clear=True, targets=targets), store=store, console=console)
 
@@ -188,13 +267,18 @@ def swap(
     store: RepoStore,
     console: Console,
     on_dirty: Callable[[list[str]], bool] | None = None,
+    on_missing_required: Callable[[list[str]], bool] | None = None,
 ) -> bool:
     """Switch to ``repo``'s layout from a clean slate — ``clear`` then ``relayout``.
 
     The target is acquired **up front** (fail-early), so an unreachable cluster aborts
     before anything is torn down. ``clear`` then removes the current cluster (and
     everything else) — gating all clusters, including this one, which swap *does* tear
-    down — and ``relayout`` lays out the now-offline target with no two-cluster window.
+    down — and ``relayout`` lays out the now-offline target.
+
+    Swapping to a cluster that ``requires`` others activates them too, so the result
+    may hold more than one cluster. What ``swap`` still guarantees is that nothing
+    from the *previous* arrangement survives into the new one.
     """
     src = repo_ops.acquire({repo.slug}, broker=store.broker)
     repo_ops.render_outcomes("acquire", src.outcomes, console=console)
@@ -202,4 +286,10 @@ def swap(
         return False
     if not clear(store=store, console=console, on_dirty=on_dirty):
         return False
-    return relayout(repo, store=store, console=console, on_dirty=on_dirty)
+    return relayout(
+        repo,
+        store=store,
+        console=console,
+        on_dirty=on_dirty,
+        on_missing_required=on_missing_required,
+    )
