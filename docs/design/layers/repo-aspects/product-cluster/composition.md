@@ -124,6 +124,20 @@ Conflicts name both clusters and the field. The escape hatch, if one is wanted, 
 a per-invocation `--prefer <pc>` — never derived, never persisted, the same posture
 as `--allow-dirty`.
 
+### Dropping a claimant needs no special handling
+
+Because the reconcile's target names the **union** of the active clusters' members,
+"is this member still claimed by something active?" is already the question
+`pre_clear` asks. When one of two clusters naming a member leaves the active set, the
+member is still named by the other and is simply kept, in place. Only members nobody
+active claims are retired — and their committed work survives in the bare repo
+regardless.
+
+What *does* change is the member's merged **role**: a member that was joined up to
+`dev` by the departing cluster falls back to `dep`. Today that is invisible, because
+applying a layout is placement-only. See [below](#open-questions) for when it stops
+being.
+
 ## Git already encodes the dev/dep distinction
 
 "[One materialization per repo](../../layout/README.md)" is a mono-control policy,
@@ -214,6 +228,11 @@ the same reason both exist: the decision is the user's, not the engine's.
   *workspace*, not about an arrangement of members, so it may want its own document
   under `product-cluster/` rather than a field on
   [`default-layout.json`](layout.md).
-- **Retiring a shared member.** When one of two clusters naming L is dropped, L
-  should survive; the exclusive-reconcile logic currently has no notion of a member
-  still being claimed elsewhere.
+- **Role transitions, once role drives refs.** A member's merged role changes as
+  clusters enter and leave the active set — joined up to `dev` when a cluster that
+  develops it becomes active, falling back to `dep` when that cluster leaves. While
+  applying a layout is placement-only this is invisible. Once `conform <state>`
+  resolves refs from role, the same transition means a **checkout**: branch head ↔
+  pin, on a worktree that may carry local commits. Neither direction is obviously
+  safe to do silently, and neither is obviously the user's intent. This is the part
+  of composition the named-state design has to answer rather than inherit.

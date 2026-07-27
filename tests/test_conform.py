@@ -362,3 +362,32 @@ def test_requires_an_undeclared_cluster_refuses(broker_env, tmp_path):
     res = _invoke(env, ["conform", "swap", "app", "--activate-required"])
     assert res.exit_code != 0
     assert "nope" in res.output
+
+
+def test_dropping_one_claimant_keeps_a_still_claimed_member(broker_env, tmp_path):
+    """A shared member survives when one of its two claimants leaves the active set.
+
+    `pre_clear` retires whatever the target doesn't name, and the target names the
+    *union* of every active cluster's members — so "still claimed by something active"
+    is already the deciding question. Only members nobody active claims are retired.
+    """
+    env = broker_env
+    _two_cluster_env(
+        env,
+        tmp_path,
+        lib_members={"shared": ("libs/shared", "dep"), "l1": ("libs/l1", "dev")},
+        app_members={"shared": ("libs/shared", "dev"), "a1": ("src/a1", "dev")},
+    )
+    assert _invoke(env, ["conform", "swap", "app", "--activate-required"]).exit_code == 0
+
+    # Drop `app` from the active set by conforming to `lib` alone (it requires nothing).
+    res = _invoke(env, ["conform", "relayout", "lib"])
+    assert res.exit_code == 0, res.output
+
+    # `shared` is still claimed by lib — kept, in the same place.
+    assert GitRepo(env.ws / "libs" / "shared").slug() == "shared"
+    assert GitRepo(env.ws / "libs" / "l1").slug() == "l1"
+    # `a1` was only ever app's, and app itself is gone — both retired, bares survive.
+    assert not (env.ws / "src" / "a1").exists()
+    assert not (env.ws / "products" / "app").exists()
+    assert GitRepo(env.off / "a1").is_bare_repository()
