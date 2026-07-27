@@ -24,6 +24,7 @@ It inherits :class:`TypedBrokerMixin`, so callers use the same typed verbs
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import urllib.parse
@@ -65,6 +66,30 @@ _PROFILE_KEYS = (
     ("core.symlinks", "symlinks"),
     ("core.ignorecase", "ignorecase"),
 )
+
+# Identity for the root commit ``init`` writes, used only for fields the host has not
+# configured. Unroutable by design (RFC 2606 ``.invalid``).
+_FALLBACK_IDENTITY = (
+    ("user.name", "mono-control"),
+    ("user.email", "mono-control@invalid"),
+)
+
+
+def _identity_config(repo: GitRepo) -> list[str]:
+    """``-c user.*`` pairs for identity fields the host hasn't set.
+
+    Prefers the user's own identity, falling back per field so a machine with no git
+    identity configured can still init a repo.
+    """
+    config: list[str] = []
+    for key, fallback in _FALLBACK_IDENTITY:
+        try:
+            if repo.config_get(key):
+                continue
+        except GitError:
+            pass  # unset: `config --get` exits non-zero on a missing key
+        config += ["-c", f"{key}={fallback}"]
+    return config
 
 # The cluster layout document, relative to a repo's working tree (a worktree, or
 # the committed tree read out of the bare repo's HEAD).
@@ -133,6 +158,27 @@ class GitRepo:
 
     def config_get(self, key: str) -> str:
         return self._git("config", "--get", key)
+
+    def head_branch(self) -> str:
+        """The branch HEAD names — meaningful even while that branch is *unborn*."""
+        return self._git("symbolic-ref", "--short", "HEAD")
+
+    def write_root_commit(self, message: str = "initial commit") -> str:
+        """Give an empty repo an empty root commit, so HEAD resolves to something.
+
+        ``git init --bare`` leaves HEAD on an **unborn** branch, which
+        ``git worktree add <path> HEAD`` cannot resolve — so a brand-new repo could be
+        created and then never placed. Plumbing rather than ``worktree add --orphan``
+        because that flag needs git >= 2.42 and this fake runs on the container's older
+        git; the real shim uses the same commands for the same reason.
+        """
+        branch = self.head_branch()
+        tree = self._git("hash-object", "-w", "-t", "tree", os.devnull)
+        # `-c` pairs must precede the subcommand; identity falls back per field so this
+        # works on a machine with no git identity configured.
+        commit = self._git(*_identity_config(self), "commit-tree", tree, "-m", message)
+        self._git("update-ref", f"refs/heads/{branch}", commit)
+        return commit
 
     def slug(self) -> str:
         try:
@@ -226,7 +272,12 @@ def clone(url: str | Path, dest: Path | str, *, profile: FsProfile, slug: str) -
 def init(
     path: Path | str, *, profile: FsProfile, slug: str, initial_branch: str | None = None
 ) -> GitRepo:
-    """Initialize a new empty **bare** repo at ``path`` and stamp ``profile`` + ``slug``."""
+    """Initialize a new **bare** repo at ``path`` and stamp ``profile`` + ``slug``.
+
+    The repo gets an empty root commit (see :meth:`GitRepo.write_root_commit`) so it is
+    placeable immediately — a repo whose HEAD is still unborn cannot have a worktree
+    added off it.
+    """
     path = Path(path)
     args = ["init", "--bare"]
     if initial_branch is not None:
@@ -236,6 +287,7 @@ def init(
     repo = GitRepo(path)
     repo._apply_profile(profile)
     repo._apply_slug(slug)
+    repo.write_root_commit()
     return repo
 
 
