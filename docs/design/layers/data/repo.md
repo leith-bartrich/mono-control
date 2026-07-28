@@ -161,6 +161,25 @@ composition — by its meaning it composes against the `upstream` remote
 declare **arbitrary named branches** (free purposes) and reference them explicitly, but
 mono-control standardizes no meaning for them.
 
+**An absent purpose means "the remote's default", not "unknown".** That is already how
+`dev` behaves — absent, it resolves to the default branch of whichever remote it composes
+against — and `dev-upstream` inherits it: absent, the base's development line *is* the
+`upstream` remote's default branch. So neither purpose needs a null or empty-string
+sentinel. The two states already say everything there is to say: **absent** follows the
+remote's default, **present** is an explicit override.
+
+That makes hand-filling `dev-upstream` both pointless and misleading. Pointless because
+an absent one already resolves to the upstream's default; misleading because
+mono-control writes it *only* in the [fork transition](#sources), and only where that
+transition repointed `dev` away from a line it had already recorded — so its presence is
+a **signal that a repoint happened**. Writing it yourself fakes that signal without
+adding information. Leave it out.
+
+An upstream with *no* development line is not a case to model — it is degenerate. A repo
+whose HEAD names no existing branch has no commits at all, and an empty repo is nothing
+to fork or to base on. (It is the same unborn-HEAD condition that left a freshly
+`init`-ed bare repo unplaceable until it was given a root commit.)
+
 We deliberately do **not** define `stable` / release / version branches here. Those are
 upstream conventions we don't control, and "stability" is usually expressed as a *tag*
 (frozen) — fundamentally a different thing from a *branch* (floating). How pinned versions
