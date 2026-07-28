@@ -61,6 +61,45 @@ PROFILE = FsProfile(filemode=True, symlinks=True, ignorecase=False)
 # The slug stamp (dir -> slug) and the FS-capability profile, stamped into a bare
 # repo's config so every worktree added off it inherits them.
 _SLUG_KEY = "mono-control.slug"
+
+# The governed source names and the refspec every conformed remote fetches, mirroring
+# the real shim. Remote-tracking, deliberately not mirror (`+refs/heads/*:refs/heads/*`),
+# which would force-overwrite local branches and collapse under multiple remotes.
+ORIGIN = "origin"
+UPSTREAM = "upstream"
+FORK_OURS = "fork-ours"
+_FETCH_REFSPEC = "+refs/heads/*:refs/remotes/{name}/*"
+
+
+def _default_source(sources: dict[str, str]) -> str | None:
+    """The source name `origin` aliases: writable canonical, else read canonical."""
+    for name in (ORIGIN, FORK_OURS, UPSTREAM):
+        if sources.get(name):
+            return name
+    return next(iter(sources), None)
+
+
+def conform_remotes(repo: GitRepo, sources: dict[str, str]) -> list[str]:
+    """Git remotes per declared source, plus `origin` aliasing the default.
+
+    Mirrors the real shim's `conform_remotes`. Additive — unrecognised remotes are left
+    alone and returned. Repoint is remove+re-add so stale tracking refs go with the old
+    URL rather than sitting beside the new one.
+    """
+    desired = dict(sources)
+    default = _default_source(sources)
+    if default is not None:
+        desired[ORIGIN] = sources[default]
+
+    existing = set(repo.remotes())
+    for name, url in desired.items():
+        if name in existing and repo.remote_url(name) != url:
+            repo.remove_remote(name)
+            existing.discard(name)
+        if name not in existing:
+            repo.set_remote(name, url)
+        repo.set_fetch_refspec(name)
+    return sorted(existing - set(desired))
 _PROFILE_KEYS = (
     ("core.filemode", "filemode"),
     ("core.symlinks", "symlinks"),
@@ -218,6 +257,23 @@ class GitRepo:
     def show_head_blob(self, rel: str) -> str:
         """Return the contents of ``rel`` as committed at HEAD (``git show HEAD:rel``)."""
         return self._git("show", f"HEAD:{rel}")
+
+    def remotes(self) -> list[str]:
+        return self._git("remote").split()
+
+    def remote_url(self, name: str) -> str | None:
+        try:
+            return self._git("remote", "get-url", name)
+        except GitError:
+            return None
+
+    def remove_remote(self, name: str) -> None:
+        """Drop a remote *and its remote-tracking refs* — why repoint is remove+re-add."""
+        self._git("remote", "remove", name)
+
+    def set_fetch_refspec(self, name: str) -> None:
+        """Give `name` the standard tracking refspec; `clone --bare` sets none."""
+        self._git("config", f"remote.{name}.fetch", _FETCH_REFSPEC.format(name=name))
 
     def set_remote(self, name: str, url: str) -> None:
         """Add remote ``name`` -> ``url``, or repoint it if it already exists."""
@@ -520,10 +576,9 @@ class ShimBroker(TypedBrokerMixin):
     def _repo_def_path(self, slug: str) -> Path:
         return self.repos_dir / f"{slug}.json"
 
-    def _source_url(self, slug: str) -> str | None:
+    def _sources(self, slug: str) -> dict[str, str]:
         data = json.loads(self._repo_def_path(slug).read_text())
-        sources = data.get("sources") or {}
-        return next(iter(sources.values())) if sources else None
+        return dict(data.get("sources") or {})
 
     @staticmethod
     def _resolve(repo: GitRepo, ref: str) -> str | None:
@@ -539,7 +594,9 @@ class ShimBroker(TypedBrokerMixin):
         if not self._repo_def_path(slug).is_file():
             return _src(slug, "definition-missing", f"repo def for {slug!r} not found")
 
-        source_url = self._source_url(slug)
+        sources = self._sources(slug)
+        default = _default_source(sources)
+        source_url = sources.get(default) if default is not None else None
         observed = self._location_of(slug)
 
         if observed is None:
@@ -564,18 +621,23 @@ class ShimBroker(TypedBrokerMixin):
                 )
             except GitError as e:
                 return _src(slug, "create-failed", f"clone {slug!r} failed: {e}")
+            conform_remotes(repo, sources)
+            # `clone --bare` creates no remote-tracking refs; fetch so an acquired repo
+            # has the same ref layout however it got here.
+            try:
+                repo.fetch(ORIGIN)
+            except GitError as e:
+                return _src(slug, "fetch-failed", f"fetch {slug!r} failed: {e}")
             return self._verify(slug, repo, refs, "cloned", f"cloned {slug!r}")
 
-        # Present (offline or materialized) -> fetch on the BARE repo.
+        # Present (offline or materialized) -> conform remotes, then fetch.
         repo = GitRepo(observed.bare)
+        conform_remotes(repo, sources)
         if source_url is not None:
             try:
-                repo.fetch("origin")
-            except GitError:
-                try:
-                    repo.fetch(source_url)
-                except GitError as e:
-                    return _src(slug, "fetch-failed", f"fetch {slug!r} failed: {e}")
+                repo.fetch(ORIGIN)
+            except GitError as e:
+                return _src(slug, "fetch-failed", f"fetch {slug!r} failed: {e}")
         if source_url is None and not refs:
             return _src(slug, "ok", f"{slug!r} present, no source to fetch")
         return self._verify(slug, repo, refs, "fetched", f"fetched {slug!r}")

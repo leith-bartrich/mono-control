@@ -51,6 +51,40 @@ def test_clone_absent_with_source(tmp_path):
     assert cloned.current_commit() == head
 
 
+def test_acquire_conforms_remotes_and_sets_a_fetch_refspec(tmp_path):
+    """Acquisition leaves the repo's git remotes agreeing with its declared sources.
+
+    `origin` aliases the default source — our writable canonical where there is one —
+    so a developer working the checkout with plain git has a usable default. And
+    `clone --bare` sets no fetch refspec, which is why a fetch previously updated
+    nothing under `refs/`.
+    """
+    base, fork = tmp_path / "base", tmp_path / "fork"
+    _origin(base)
+    _origin(fork)
+    broker, store = _env(tmp_path)
+    store.create(
+        Repo(
+            version=1,
+            slug="alpha",
+            name="Alpha",
+            sources={"upstream": str(base), "fork-ours": str(fork)},
+        )
+    )
+
+    assert run(SourceRequest(refs_by_slug={"alpha": set()}), broker=broker).ok
+
+    bare = tmp_path / "off" / "alpha"
+    url = lambda n: run_git(["remote", "get-url", n], cwd=bare)  # noqa: E731
+    assert url("upstream") == str(base)
+    assert url("fork-ours") == str(fork)
+    assert url("origin") == str(fork)  # the writable canonical, not the base
+    assert (
+        run_git(["config", "remote.origin.fetch"], cwd=bare)
+        == "+refs/heads/*:refs/remotes/origin/*"
+    )
+
+
 def test_init_absent_without_source(tmp_path):
     broker, store = _env(tmp_path)
     store.create(Repo(version=1, slug="fresh", name="Fresh"))

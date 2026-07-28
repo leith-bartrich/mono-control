@@ -37,10 +37,22 @@ Additively and idempotently — re-running is always safe:
    no remote (where the stamps are applied — see below). No worktree exists yet; the
    [layout engine](../layout/README.md)'s `worktree add` produces the `dev` checkout at
    placement.
-3. **already present** (offline or materialized) → **fetch** from the source to
-   refresh the requested refs.
-4. **Verify** the requested refs now exist; a missing source or ref fails *that
+3. **Conform the remotes** to the repo's declared [sources](../data/repo.md#sources) —
+   a remote per source under its governed name, plus `origin` aliasing the default, each
+   with the remote-tracking refspec. Done on *both* the create and already-present paths,
+   so it is self-healing: a definition edited since the last run is applied on the next
+   operation.
+4. **Fetch `origin`** to refresh the requested refs. This runs after a fresh clone too —
+   `clone --bare` creates no remote-tracking refs, so fetching gives an acquired repo the
+   same ref layout however it got here, and it is nearly free when the objects have just
+   arrived.
+5. **Verify** the requested refs now exist; a missing source or ref fails *that
    repo* — reported, **per-repo independent**, never half-failing the whole request.
+
+A fetch updates `refs/remotes/<name>/*` and never `refs/heads/*` — local branches are the
+developer's, and divergence surfaces as ahead/behind rather than being silently resolved.
+Advancing a local branch is **not** something the source engine does; see
+[conform](../repo-aspects/product-cluster/conform.md) for where that question lives.
 
 It only ever *adds* availability — create (clone/init) or refresh (fetch). It never
 **mats (places)** or **demats (retires)** a checkout — that's the
