@@ -189,6 +189,22 @@ class GitRepo:
     def is_dirty(self) -> bool:
         return bool(self._git("status", "--porcelain"))
 
+    def unreachable_commit_count(self) -> int:
+        """Commits reachable from *this worktree's* HEAD but from no branch, tag or remote.
+
+        Non-zero means removing the worktree would **orphan** committed work: a detached
+        HEAD's commits are anchored only by that worktree's HEAD. ``--all`` is unusable
+        here because it counts HEAD itself; naming the namespaces explicitly is what
+        makes the question meaningful, and lets a branch *or* a tag clear the block.
+        """
+        try:
+            out = self._git(
+                "rev-list", "--count", "HEAD", "--not", "--branches", "--tags", "--remotes"
+            )
+        except GitError:
+            return 0  # unborn HEAD: nothing committed here, nothing to orphan
+        return int(out or 0)
+
     def fetch(self, remote: str, refs: Iterable[str] | None = None) -> None:
         args = ["fetch", remote]
         if refs is not None:
@@ -623,8 +639,10 @@ class ShimBroker(TypedBrokerMixin):
     def _v_retire(self, params: dict) -> dict:
         """Remove ``slug``'s worktree; the bare repo (and its commits) survive.
 
-        Dirty-gated: committed work is safe in the bare repo, but a worktree with
-        *uncommitted* changes is refused (``blocked``) rather than discarded.
+        Two guards, covering opposite halves of "retire never loses work": *uncommitted*
+        changes are refused, and so is *committed* work no ref anchors — a detached
+        HEAD's commits are held by the worktree alone, and the dirty check cannot see
+        them because committing is what cleans the tree.
         """
         slug = _valid_slug(params.get("slug"))
         observed = self._location_of(slug)
@@ -634,6 +652,13 @@ class ShimBroker(TypedBrokerMixin):
             return _lay(
                 slug, "blocked",
                 f"{slug!r} has uncommitted changes; refusing to discard its worktree",
+            )
+        orphans = GitRepo(observed.worktree).unreachable_commit_count()
+        if orphans:
+            return _lay(
+                slug, "blocked",
+                f"{slug!r} has {orphans} commit(s) on no branch, tag or remote — removing its "
+                f"worktree would leave them unreachable; put them on a branch or tag them first",
             )
         try:
             GitRepo(observed.bare).worktree_remove(observed.worktree)

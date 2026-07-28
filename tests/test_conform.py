@@ -259,13 +259,24 @@ def test_conform_clear_allow_dirty_still_guards_uncommitted_work(broker_env, tmp
     assert res.exit_code != 0
     assert (placed / ".git").exists()  # kept; uncommitted work intact
 
-    # Commit, and clear succeeds — the worktree is removed, the bare repo survives.
+    # Committing is NOT enough. Placement is detached, so the commit lands on no branch
+    # and removing the worktree would orphan it — the second guard refuses. (This case
+    # previously asserted the retire *succeeded*, i.e. it encoded the data loss.)
     run_git(["add", "."], cwd=placed)
     run_git(["commit", "-m", "wip"], cwd=placed)
+    wip = run_git(["rev-parse", "HEAD"], cwd=placed)
     res2 = _invoke(env, ["conform", "clear"])
-    assert res2.exit_code == 0, res2.output
+    assert res2.exit_code != 0
+    assert "unreachable" in res2.output
+    assert (placed / ".git").exists()  # still kept
+
+    # Anchoring the work releases it, and the commit survives in the bare repo.
+    run_git(["tag", "wip-kept"], cwd=placed)
+    res3 = _invoke(env, ["conform", "clear"])
+    assert res3.exit_code == 0, res3.output
     assert not placed.exists()
     assert GitRepo(env.off / "pc1").is_bare_repository()
+    assert run_git(["rev-parse", "wip-kept^{commit}"], cwd=env.off / "pc1") == wip
 
 
 # --------------------------------------------------------------------------- #
@@ -391,3 +402,67 @@ def test_dropping_one_claimant_keeps_a_still_claimed_member(broker_env, tmp_path
     assert not (env.ws / "src" / "a1").exists()
     assert not (env.ws / "products" / "app").exists()
     assert GitRepo(env.off / "a1").is_bare_repository()
+
+
+def test_conform_clear_blocks_orphaning_a_detached_commit(broker_env, tmp_path):
+    """Committed work on a detached worktree is refused, not silently orphaned.
+
+    Placement checks out a detached HEAD, so a commit made in a placed worktree sits on
+    no branch. The tree is then *clean*, so the dirty gate waves the retire through and
+    `git worktree remove` leaves the commit unreachable. Committing is exactly what makes
+    you vulnerable, which is why this needs its own guard.
+    """
+    env = broker_env
+    _origin(tmp_path / "ao")
+    clone(tmp_path / "ao", env.off / "alpha", profile=PROFILE, slug="alpha")
+    add_worktree(env.off / "alpha", env.ws / "alpha")
+    _seed(env, "alpha", tmp_path / "ao")
+
+    wt = env.ws / "alpha"
+    assert run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=wt) == "HEAD"  # detached
+    (wt / "work.txt").write_text("committed but on no branch\n")
+    run_git(["add", "."], cwd=wt)
+    run_git(["commit", "-m", "orphan-to-be"], cwd=wt)
+    orphan = run_git(["rev-parse", "HEAD"], cwd=wt)
+    assert not run_git(["status", "--porcelain"], cwd=wt)  # clean: dirty gate sees nothing
+
+    res = _invoke(env, ["conform", "clear"])
+    assert res.exit_code != 0
+    assert "unreachable" in res.output
+    assert (wt / ".git").exists()  # worktree kept, commit still reachable from its HEAD
+    assert run_git(["rev-parse", "HEAD"], cwd=wt) == orphan
+
+
+def test_conform_clear_allows_retire_once_the_commit_is_anchored(broker_env, tmp_path):
+    """Anchoring the work — here with a tag — clears the block."""
+    env = broker_env
+    _origin(tmp_path / "ao")
+    clone(tmp_path / "ao", env.off / "alpha", profile=PROFILE, slug="alpha")
+    add_worktree(env.off / "alpha", env.ws / "alpha")
+    _seed(env, "alpha", tmp_path / "ao")
+
+    wt = env.ws / "alpha"
+    (wt / "work.txt").write_text("saved\n")
+    run_git(["add", "."], cwd=wt)
+    run_git(["commit", "-m", "keep me"], cwd=wt)
+    orphan = run_git(["rev-parse", "HEAD"], cwd=wt)
+    run_git(["tag", "keepme"], cwd=wt)
+
+    res = _invoke(env, ["conform", "clear"])
+    assert res.exit_code == 0, res.output
+    assert not wt.exists()  # retired
+    # The commit survives in the bare repo, anchored by the tag.
+    assert run_git(["rev-parse", "keepme^{commit}"], cwd=env.off / "alpha") == orphan
+
+
+def test_conform_clear_retires_a_clean_detached_worktree(broker_env, tmp_path):
+    """The guard is about *unanchored* commits, not about being detached."""
+    env = broker_env
+    _origin(tmp_path / "ao")
+    clone(tmp_path / "ao", env.off / "alpha", profile=PROFILE, slug="alpha")
+    add_worktree(env.off / "alpha", env.ws / "alpha")  # detached at the branch tip
+    _seed(env, "alpha", tmp_path / "ao")
+
+    res = _invoke(env, ["conform", "clear"])
+    assert res.exit_code == 0, res.output
+    assert not (env.ws / "alpha").exists()
