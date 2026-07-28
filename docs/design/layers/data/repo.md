@@ -98,8 +98,48 @@ coexist, the moment an `origin` repo gains an upstream its `origin` must reclass
 `fork-ours` (we diverge from the base) or `mirror-ours` (we only track it) — a transition
 mono-control performs, re-stamping the local remote. It forces a conscious "fork it or
 mirror it?" decision at the moment the relationship changes, rather than letting `origin`
-silently mean two things. When there *is* an upstream, git's default `origin` is
-suppressed at clone with `git clone --origin <name>`.
+silently mean two things.
+
+### Sources become git remotes — and `origin` is *ours* to set
+
+The declaration above is a vocabulary; this is how it lands in a real `.git/config`.
+Two rules, both pure functions of the definition, applied idempotently on any operation
+that touches the repo:
+
+1. **Every declared source is a git remote under its governed name** — which is what
+   makes `git fetch <name>` trustworthy.
+2. **`origin` always exists and aliases the default source**: our writable canonical
+   (`origin` if the repo is ours, else `fork-ours`), otherwise the read canonical
+   (`upstream`). Mirrors and third-party forks are tracked references and are never the
+   default.
+
+So **every managed repo has an `origin`, meaning "the remote you'd reach for by
+default."** An earlier design instead *suppressed* git's default (`clone --origin
+<name>`) whenever an upstream was present. That optimised for vocabulary purity and paid
+for it in the one place the vocabulary doesn't reach: the worktrees are worked in with
+**plain git**, which mono-control deliberately does not wrap, so a checkout where `git
+push` and `git pull` have no default is not usable by the tool the developer is actually
+holding.
+
+An upstream-based repo therefore carries **both** `origin` and `fork-ours` at the same
+URL. The duplication is intended — rule 1 holding *universally* is worth more than a tidy
+`git remote -v`, and it costs only a duplicate set of tracking refs, since the objects
+are shared.
+
+Conformance is **additive**: remotes mono-control doesn't recognise are left alone and
+reported, the same posture `scan` takes with unmanaged repos. Repointing a remote is
+**remove-then-add**, never `set-url`, so `refs/remotes/<name>/*` goes with the URL it
+described — otherwise a repointed `origin` would carry the old remote's branches beside
+the new one's, all looking current. No work is at risk either way: `refs/heads/*` is
+untouched, and tracking refs are regenerable mirrored state.
+
+Each conformed remote also gets the standard remote-tracking refspec
+(`+refs/heads/*:refs/remotes/<name>/*`). `git clone --bare` sets none at all, so before
+this a fetch updated nothing under `refs/` and a bare repo could never learn about new
+upstream commits. A **mirror** refspec (`+refs/heads/*:refs/heads/*`) is deliberately not
+used: it force-overwrites local branches, and it collapses under multiple remotes, since
+`upstream` and `fork-ours` would both map onto `refs/heads/*` and the last fetch would
+win.
 
 **Forking an upstream is a governed transition.** The mirror-image moment: a consumed
 `upstream` repo gets forked by us (typically because the base won't take our patches and
