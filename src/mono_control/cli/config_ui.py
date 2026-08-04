@@ -12,11 +12,20 @@ import questionary
 from rich.console import Console
 
 from mono_control.broker import BrokerProtocol
-from mono_control.config import ConfigError, WorkspaceConfig, load_config, save_config
+from mono_control.config import (
+    ConfigError,
+    WorkspaceConfig,
+    load_config_status,
+    save_config,
+)
 
 console = Console()
 
 _EXIT = "[exit config manager]"
+
+# ``system.json`` is optional; absence means defaults. The manager says so rather
+# than rendering values that look like they came from a file.
+_DEFAULTS = "defaults - no system.json"
 
 
 def manage(broker: BrokerProtocol) -> None:
@@ -39,17 +48,18 @@ def manage(broker: BrokerProtocol) -> None:
 
 def _view(broker: BrokerProtocol) -> None:
     try:
-        config = load_config(broker)
+        config, from_disk = load_config_status(broker)
     except ConfigError as e:
-        console.print(f"[yellow](missing)[/yellow] {e}")
+        console.print(f"[red]invalid:[/red] {e}")
         return
     console.print(f"  version = {config.version}")
+    console.print(f"  source  = {'system.json' if from_disk else _DEFAULTS}")
 
 
 def _validate(broker: BrokerProtocol) -> None:
     try:
-        load_config(broker)
+        _, from_disk = load_config_status(broker)
     except ConfigError as e:
         console.print(f"[red]invalid:[/red] {e}")
         return
-    console.print("[green]ok[/green]")
+    console.print("[green]ok[/green]" if from_disk else f"[green]ok[/green] ({_DEFAULTS})")
