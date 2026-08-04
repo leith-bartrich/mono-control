@@ -13,7 +13,7 @@ from rich.table import Table
 from mono_control.app_context import AppContext
 from mono_control.aspects import attach_aspect_commands
 from mono_control.broker import BrokerClient, emit_schema
-from mono_control.config import ConfigError, RepoStore, load_config
+from mono_control.config import ConfigError, RepoStore, load_config_status
 from mono_control.paths import CONFIG_DIR
 from mono_control.sandbox import require_broker, require_container
 
@@ -90,10 +90,14 @@ def status(ctx: typer.Context) -> None:
 
 @app.command()
 def validate(ctx: typer.Context) -> None:
-    """Load and validate the workspace config (including repo definitions)."""
+    """Load and validate the workspace config (including repo definitions).
+
+    An absent ``system.json`` is not a failure — it means workspace defaults (see
+    ``config/loader.py``). Repo definitions are validated exactly as before.
+    """
     app_ctx: AppContext = ctx.obj
     try:
-        load_config(app_ctx.broker)
+        _, system_from_disk = load_config_status(app_ctx.broker)
     except ConfigError as e:
         console.print(f"[red]error:[/red] {e}")
         raise typer.Exit(code=1)
@@ -111,6 +115,11 @@ def validate(ctx: typer.Context) -> None:
             console.print(f"[red]error[/red] repo {slug}: {e}")
         raise typer.Exit(code=1)
     console.print(f"[green]ok:[/green] config is valid ({len(slugs)} repo(s))")
+    if not system_from_disk:
+        console.print(
+            "[dim]note: no system.json - workspace defaults in use; "
+            "`config init` writes them out[/dim]"
+        )
 
 
 @app.command("emit-schema")
