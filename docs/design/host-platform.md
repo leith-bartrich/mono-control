@@ -77,15 +77,13 @@ default, treating it as mandatory:
   over any `.env` or the image's baked `ENV`, so there is no precedence ambiguity.
   It never falls back to `generic`: if it cannot map the host to a known token it
   errors **on the host side**. Supplying specificity is its entire job here.
-- **The dev container** — the interactive "Reopen in Container" path, which the
-  shim is *not* part of (VS Code starts the container itself). An
-  `initializeCommand` runs on the host before the container starts, detects the
-  platform, and writes it to a generated `.env`; the Compose service interpolates
-  it into the container's environment with a safe fallback —
-  `MONO_CONTROL_HOST_PLATFORM: "${MONO_CONTROL_HOST_PLATFORM:-generic}"` — so a
-  missing `.env` degrades to `generic` rather than failing the container (only the
-  stamping operations then refuse). The generated `.env` is a per-host artifact and
-  is gitignored. A GitHub Codespace resolves to `linux`.
+- **The Compose default** — the `${MONO_CONTROL_HOST_PLATFORM:-generic}`
+  interpolation in the Compose service. This was the fallback for the interactive
+  "Reopen in Container" path, which VS Code started itself without the shim; that
+  path has since been retired, so the shim is now the *only* way the container
+  starts and its explicit `-e` always wins. The interpolation is kept as a safe
+  default for a hand-run `docker compose up`, where degrading to `generic` (only
+  the stamping operations then refuse) beats failing the container outright.
 
 ## The gate: two tiers
 

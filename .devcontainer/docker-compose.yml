@@ -1,10 +1,13 @@
 # Source of truth for the mono-control container — the pure, self-contained built
-# tool, shared by both use modes:
+# tool. There is exactly ONE consumer: the host `mproj` shim, which runs
+# `docker compose run --rm` against this file.
 #
-#   Mode 1 (interactive dev): devcontainer.json layers docker-compose.devcontainer.yml
-#     on top of this, bind-mounting live source only (for edit-immediacy).
-#   Mode 2 (headless): the host `mproj` shim runs `docker compose run --rm` against
-#     THIS file alone.
+# The VS Code "Reopen in Container" path (devcontainer.json plus a dev-time
+# overlay) was retired: development happens through the shim, so a second way to
+# start the same container earned a third image built from this same Dockerfile
+# and a set of comments describing lifecycle hooks nothing ran. The shim supplies
+# the live-source mount itself (see `_dev_run`), which is all the overlay added
+# that mattered.
 #
 # Step 2: the container performs NO git / filesystem / mono-config effects itself —
 # it calls back to a host-side broker over JSON-RPC. The shim stands up that broker
@@ -19,8 +22,9 @@ services:
       dockerfile: .devcontainer/Dockerfile
     user: codespace
     working_dir: /workspaces/mono-control
-    # Keep the container alive for VS Code to attach. Mode 2's
-    # `docker compose run --rm` overrides this with the real command.
+    # An idle default only. The shim's `docker compose run --rm` always overrides
+    # it with the real command, so this is what a bare `docker compose up` would
+    # get — kept so the service has a valid default rather than inheriting one.
     command: sleep infinity
     environment:
       # Host-platform hint (see docs/design/host-platform.md). Interpolated from an

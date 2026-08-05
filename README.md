@@ -76,14 +76,17 @@ mono-control        the state manager itself — baked into a slim container ima
                     and run inside it, never on the host
 ```
 
-The container is defined by Docker Compose and serves two modes from one image:
+The container is defined by Docker Compose, and the shim is its only consumer. It
+runs in one of two backends, both driven by `mproj`:
 
-- **Interactive development** (VS Code "Reopen in Container"): live source and
-  the sibling `mono-config` / `mono-work` directories are bind-mounted under
-  `/workspaces`.
-- **Headless execution** (the shim): the shim runs `docker compose run` against
-  the baked image and bind-mounts the workspace's `mono-config` / `mono-work`
-  into the container per invocation.
+- **dev mode** — a `mono-control/` checkout is present, so the shim runs
+  `docker compose run` and bind-mounts the live source over the image's baked
+  copy. Code edits take effect with no rebuild.
+- **artifact mode** — no checkout, so the shim runs the prebuilt
+  `mono-control:latest` directly.
+
+No workspace directories are mounted in either backend: since Step 2 the container
+performs every git / filesystem effect through the host-side broker.
 
 Inside the container the managed directories always live at fixed paths:
 
@@ -142,28 +145,28 @@ layer), so acquisition uses your host's own git credentials — the OS keyring
 (Windows Credential Manager, the macOS Keychain) or `gh`'s store that native git
 already reads. Nothing is injected into, or written from, the container.
 
-## Dev container
+## The container
 
-Interactive development happens inside the container via VS Code Dev Containers
-(or a GitHub Codespace). The image is **slim and purpose-built**:
-`python:3.12-slim-bookworm` (Debian/glibc) with just git and
-[uv](https://docs.astral.sh/uv/) — no foreign-language toolchains, since
-mono-control only manages git and config data. A smaller image is also a smaller
-supply-chain surface, in keeping with the isolation goal above.
+Development happens through the shim — `mproj control`, `mproj shell-control`,
+`mproj test-control`. There is no "Reopen in Container" step, and deliberately so:
+the VS Code devcontainer path was a second way to start the same container, and it
+earned a third image built from this same Dockerfile plus a set of comments
+describing lifecycle hooks nothing ran. The shim supplies the live-source mount
+itself, which was the only thing that path added.
 
-The container is described by Docker Compose:
+The image is **slim and purpose-built**: `python:3.12-slim-bookworm` (Debian/glibc)
+with just git and [uv](https://docs.astral.sh/uv/) — no foreign-language
+toolchains, since mono-control only manages git and config data. A smaller image is
+also a smaller supply-chain surface, in keeping with the isolation goal above.
+
+The container is described by a single Compose file:
 
 - [.devcontainer/docker-compose.yml](.devcontainer/docker-compose.yml) — the
-  source of truth (image, sentinel, run context); also what the headless shim
-  runs.
-- [.devcontainer/docker-compose.devcontainer.yml](.devcontainer/docker-compose.devcontainer.yml)
-  — a dev-time-only overlay (live source + sibling bind mounts + Claude Code
-  persistence) layered on top for VS Code.
-- [.devcontainer/devcontainer.json](.devcontainer/devcontainer.json) — the VS
-  Code attachment, preloading the Claude Code, Python, and Pylance extensions.
+  source of truth (build context, sandbox sentinel, run context), and what the
+  shim runs.
 
-Open the folder in VS Code and run **Dev Containers: Reopen in Container**, or
-open the repo in a GitHub Codespace.
+The directory keeps its `.devcontainer/` name for continuity with where the
+Dockerfile has always lived; nothing reads it as devcontainer configuration.
 
 ## Building the image
 

@@ -6,12 +6,16 @@
 # supply-chain surface, which is the whole reason this tool is boxed in a
 # container in the first place (see README.md).
 #
-# Debian (glibc), NOT Alpine: the VS Code Server, Pylance, and the Claude Code
-# extension all require glibc; musl would break them.
+# Debian (glibc), NOT Alpine. The original reason — the VS Code Server, Pylance
+# and the Claude Code extension all needing glibc — retired with the devcontainer
+# path. The base is deliberately unchanged anyway: swapping it is a decision with
+# its own testing (wheel availability, image size, git behavior), not a tidy-up to
+# be folded into a comment edit.
 FROM python:3.12-slim-bookworm
 
 # git: what mono-control manages (and eventually shells out to).
-# sudo: postCreateCommand chowns the .claude named volume as root.
+# sudo: root-owned paths occasionally need fixing from inside `mproj shell-control`
+#       (this was the devcontainer's postCreateCommand chown; the need outlived it).
 # ca-certificates: TLS for uv package downloads and git-over-HTTPS.
 # less: ergonomics for interactive shells and git pagers.
 RUN apt-get update \
@@ -22,9 +26,10 @@ RUN apt-get update \
         less \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root user. The name is kept as `codespace` to match the .claude volume
-# target (/home/codespace/.claude), devcontainer.json's remoteUser, and the
-# postCreateCommand chown. Passwordless sudo lets that chown run unattended.
+# Non-root user. The name `codespace` is now load-bearing only through the paths
+# built on it — the baked venv (/home/codespace/.mono-control-venv), the shim's
+# test venv and its uv cache mount. Renaming it is a coordinated change across the
+# shim, not a rename here. Passwordless sudo is retained for in-container work.
 ARG USERNAME=codespace
 RUN useradd --create-home --shell /bin/bash "${USERNAME}" \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${USERNAME}" \
@@ -38,8 +43,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # purely as a Docker filesystem-sharing artifact (not an adversary, in this
 # single-user sandbox), which would otherwise trip git's "dubious ownership"
 # guard in every managed repo. System scope so it covers all users and all
-# repos — mono-control, mono-config, and every repo under mono-repos — and so
-# it applies in the headless path too, which runs no VS Code lifecycle hooks.
+# repos — mono-control, mono-config, and every repo under mono-repos. System scope
+# also means it needs no lifecycle hook to apply, which is what the shim's path has
+# always relied on.
 RUN git config --system --add safe.directory '*'
 
 # The sandbox marker — THE security gate for both the build backend (_build/gate.py)
@@ -56,9 +62,9 @@ RUN printf 'mono-control dev container\n' > /etc/mono-control-container
 # relies on this same trick for `mproj test-control`.)
 ENV MONO_CONTROL_VENV="/home/${USERNAME}/.mono-control-venv"
 
-# Put that venv's bin on PATH for ALL processes — VS Code terminals and the
-# headless shim path alike — so the baked `mono-control` console script resolves
-# without relying on devcontainer.json's remoteEnv (which the headless path skips).
+# Put that venv's bin on PATH for ALL processes, so the baked `mono-control`
+# console script resolves from the image itself rather than from any per-session
+# environment setup — there is no lifecycle hook to rely on.
 # ~/.local/bin stays on PATH for any other user-installed tooling.
 ENV PATH="${MONO_CONTROL_VENV}/bin:/home/${USERNAME}/.local/bin:${PATH}"
 
