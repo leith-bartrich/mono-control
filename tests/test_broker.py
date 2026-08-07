@@ -370,10 +370,13 @@ def test_emit_schema_has_expected_model_keys():
     # The observation shapes plus a request/response pair per verb.
     assert {"WireRepo", "WireUnmanaged", "WireInventory"} <= set(schema)
     assert {"AcquireRequest", "AcquireResult", "LayoutOpRequest", "LayoutOpResult",
-            "CheckoutRequest", "ReadLayoutResult", "RepoDefsResult",
-            "RemoteDefaultBranchRequest", "RemoteDefaultBranchResult"} <= set(schema)
+            "CheckoutRequest", "CheckoutBranchRequest", "ReadLayoutResult",
+            "RepoDefsResult", "RemoteDefaultBranchRequest",
+            "RemoteDefaultBranchResult"} <= set(schema)
     props = schema["WireRepo"]["properties"]
-    assert set(props) == {"slug", "location", "state", "commit", "dirty"}
+    # ``branch`` is what lets the container tell "on the branch" from "detached at
+    # its tip" — the distinction the layout engine reconciles on.
+    assert set(props) == {"slug", "location", "state", "commit", "dirty", "branch"}
     assert set(schema["WireUnmanaged"]["properties"]) == {"location", "state"}
     assert set(schema["AcquireResult"]["properties"]) == {
         "status", "summary", "unresolved_refs", "resolved"

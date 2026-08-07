@@ -53,6 +53,33 @@ def _resolve_branch_head(
     return resolved_refs.get(slug, {}).get(f"refs/heads/{branch}")
 
 
+def _ref_change(
+    observed: OnDiskRepo,
+    desired: LayoutTargetPresentCommit | LayoutTargetPresentBranchHead,
+    resolved: str | None,
+) -> bool:
+    """Does the observed ref differ from what ``desired`` asks for?
+
+    The two target kinds ask different questions, and conflating them was a bug.
+
+    A **commit** target asks *which revision*, so commit identity answers it and a
+    detached HEAD is the correct result.
+
+    A **branch-head** target asks *which line you are on*, which commit identity
+    cannot answer: a detached HEAD sitting exactly on the branch's tip has the
+    right commit and is not on the branch. Comparing commits reported such a
+    worktree ``satisfied`` and left it detached, so there was no way to get a
+    materialized worktree onto its branch through the tool at all.
+
+    Attachment implies the commit here, so it is the only thing worth comparing:
+    ``resolved`` came from ``refs/heads/<branch>`` in the same local repo, so a
+    worktree attached to that branch is on that commit by construction.
+    """
+    if isinstance(desired, LayoutTargetPresentBranchHead):
+        return observed.branch != desired.branch
+    return observed.commit != resolved
+
+
 def _plan_present(
     slug: str,
     observed: OnDiskRepo | None,
@@ -87,8 +114,13 @@ def _plan_present(
                 classification="blocked",
                 action="none",
                 reason=(
-                    f"branch {desired.branch!r} not present locally for {slug!r}; "
-                    f"source engine must fetch first"
+                    # Fired for ANY unresolvable ref, so a branch that simply does
+                    # not exist was reported as un-fetched — which sent at least one
+                    # reader hunting through container credentials and bare-repo
+                    # fetch state. Name both possibilities instead of asserting one.
+                    f"branch {desired.branch!r} did not resolve for {slug!r}: it may "
+                    f"not exist on the remote, or the source engine may not have "
+                    f"fetched it"
                 ),
             )
 
@@ -119,7 +151,7 @@ def _plan_present(
 
     # observed.state == "materialized" (a worktree already exists)
     same_location = observed.location == target_location
-    ref_change = observed.commit != resolved
+    ref_change = _ref_change(observed, desired, resolved)
 
     if same_location and not ref_change:
         return PlanItem(

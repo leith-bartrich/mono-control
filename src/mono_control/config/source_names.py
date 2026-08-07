@@ -65,3 +65,37 @@ def writable_remote(sources: dict[str, str]) -> str | None:
 def has_fork(sources: dict[str, str]) -> bool:
     """True if any governed ``fork-*`` source is declared."""
     return any(split_key(key)[0] == "fork" for key in sources)
+
+
+# --------------------------------------------------------------------------- #
+# Branch lines
+# --------------------------------------------------------------------------- #
+def resolve_line(branches: dict[str, str], value: str) -> str | None:
+    """Resolve *value* to a concrete branch the repo **declares**, or ``None``.
+
+    Accepts either the **line name** (a key — ``dev``, ``dev-upstream``, or any
+    declared purpose) or the **concrete branch** it maps to. Both are "a line the
+    repo already expresses", which is the only thing mono-control checks out; the
+    host re-validates against this same map before git ever sees the value.
+
+    Taking only concrete names is what made ``--branch dev`` fail on a repo whose
+    def says ``{"dev": "main"}``, while the docs describe ``branches`` as the
+    purpose vocabulary. Taking only keys would have broken the concrete form that
+    already worked. Accepting both costs nothing, because neither reading can
+    escape the declared set.
+
+    Keys win over values. A repo declaring ``{"dev": "main", "main": "release"}``
+    is pathological, and the key reading is the one the vocabulary intends.
+    """
+    if value in branches:
+        return branches[value]
+    if value in branches.values():
+        return value
+    return None
+
+
+def declared_lines(branches: dict[str, str]) -> str:
+    """Render a repo's declared lines for an error message."""
+    if not branches:
+        return "none declared"
+    return ", ".join(f"{name}={branch}" for name, branch in sorted(branches.items()))

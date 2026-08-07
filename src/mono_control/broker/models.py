@@ -56,6 +56,9 @@ class WireRepo(StrictModel):
     state: State
     commit: str | None
     dirty: bool
+    # The branch HEAD is attached to; None when detached or bare. Optional with a
+    # default so this is an ADDITIVE wire change (see mono-control-shim#7).
+    branch: str | None = None
 
 
 class WireUnmanaged(StrictModel):
@@ -98,6 +101,7 @@ def wire_repo_from_on_disk(
         state=repo.state,
         commit=repo.commit,
         dirty=repo.dirty,
+        branch=repo.branch,
     )
 
 
@@ -113,6 +117,7 @@ def wire_repo_to_on_disk(
         state=wire.state,
         commit=wire.commit,
         dirty=wire.dirty,
+        branch=wire.branch,
     )
 
 
@@ -237,10 +242,39 @@ class LayoutOpRequest(StrictModel):
 
 
 class CheckoutRequest(StrictModel):
-    """Check ``commit`` out at ``slug``'s current location (hex commit only)."""
+    """Check ``commit`` out at ``slug``'s current location (hex commit only).
+
+    The **pin** purpose: put this worktree at an exact revision. The revision
+    comes from the ledger (a snapshot, a dep pin), not from a branch, so a hex
+    commit is the right currency and the resulting detached HEAD is correct.
+    """
 
     slug: str
     commit: str
+
+
+class CheckoutBranchRequest(StrictModel):
+    """Attach ``slug``'s worktree to ``branch`` — a line the repo *declares*.
+
+    The **follow-a-line** purpose, and a different currency from
+    ``CheckoutRequest`` on purpose. Checking out a hex commit always detaches, so
+    the pin verb structurally cannot express "on this branch"; the two were one
+    verb, and the second meaning was lost in translation.
+
+    ``branch`` is not trusted. Before it reaches git the host resolves it against
+    the lines the repo *expresses* — those its def declares, plus the bare repo's
+    own default ``HEAD`` — all read host-side, the same rule sources already
+    follow ("never accepted from the container"). So the container's reach is not
+    "any ref" but "a line this repo expresses", which is **narrower** than the hex
+    form it sits beside: there, any object the container can name is fair game.
+
+    The default counts because ``repo.md`` says the remote's default *is* the line
+    unless a def overrides it. Without that, a repo declaring no ``branches`` —
+    most of them — could never be put on a branch at all.
+    """
+
+    slug: str
+    branch: str
 
 
 class LayoutOpResult(StrictModel):

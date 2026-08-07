@@ -24,6 +24,7 @@ from typing import Any, Protocol, runtime_checkable
 from .models import (
     AcquireResult,
     BrokerError,
+    CheckoutBranchRequest,
     CheckoutRequest,
     LayoutOpRequest,
     LayoutOpResult,
@@ -98,9 +99,22 @@ class TypedBrokerMixin:
         return LayoutOpResult.model_validate(self.call(method, params))
 
     def checkout(self, slug: str, commit: str) -> LayoutOpResult:
-        """Check ``commit`` out at ``slug``'s current location (hex only)."""
+        """Check ``commit`` out at ``slug``'s current location (hex only).
+
+        The pin purpose: leaves HEAD detached, which is correct for a revision
+        that came from the ledger rather than from a branch.
+        """
         params = CheckoutRequest(slug=slug, commit=commit).model_dump()
         return LayoutOpResult.model_validate(self.call("checkout", params))
+
+    def checkout_branch(self, slug: str, branch: str) -> LayoutOpResult:
+        """Attach ``slug``'s worktree to ``branch`` (a line the repo declares).
+
+        The host re-validates ``branch`` against the repo def before it reaches
+        git, so this cannot name a ref the repo has not declared.
+        """
+        params = CheckoutBranchRequest(slug=slug, branch=branch).model_dump()
+        return LayoutOpResult.model_validate(self.call("checkout_branch", params))
 
     def read_layout(self, cluster_slug: str) -> ReadLayoutResult:
         """Read a cluster's ``product-cluster/default-layout.json`` contents."""
@@ -180,6 +194,7 @@ class BrokerProtocol(Protocol):
     def retire(self, slug: str, location: str | None = None) -> LayoutOpResult: ...
 
     def checkout(self, slug: str, commit: str) -> LayoutOpResult: ...
+    def checkout_branch(self, slug: str, branch: str) -> LayoutOpResult: ...
 
     def read_layout(self, cluster_slug: str) -> ReadLayoutResult: ...
 
