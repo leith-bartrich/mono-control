@@ -254,6 +254,13 @@ class GitRepo:
         # ``--`` guards a ref beginning with ``-`` from being read as a flag.
         self._git("checkout", ref, "--")
 
+    def attached_branch(self) -> str | None:
+        """The branch HEAD is attached to, or ``None`` when detached."""
+        try:
+            return self._git("symbolic-ref", "--quiet", "--short", "HEAD") or None
+        except GitError:
+            return None
+
     def show_head_blob(self, rel: str) -> str:
         """Return the contents of ``rel`` as committed at HEAD (``git show HEAD:rel``)."""
         return self._git("show", f"HEAD:{rel}")
@@ -468,6 +475,7 @@ class _Observed:
     state: str  # "materialized" | "offline"
     commit: str | None
     dirty: bool
+    branch: str | None = None  # attached branch; None when detached or bare
 
 
 # --------------------------------------------------------------------------- #
@@ -520,7 +528,10 @@ class ShimBroker(TypedBrokerMixin):
         wt = repo.worktree_under(self.work_root)
         if wt is not None:
             tree = GitRepo(wt)
-            return _Observed(slug, bare, wt, "materialized", tree.current_commit(), tree.is_dirty())
+            return _Observed(
+                slug, bare, wt, "materialized",
+                tree.current_commit(), tree.is_dirty(), tree.attached_branch(),
+            )
         return _Observed(slug, bare, None, "offline", repo.current_commit(), False)
 
     def _inventory(self) -> tuple[dict[str, _Observed], list[Path]]:
@@ -563,6 +574,7 @@ class ShimBroker(TypedBrokerMixin):
                 state=obs.state,  # type: ignore[arg-type]
                 commit=obs.commit,
                 dirty=obs.dirty,
+                branch=obs.branch,
             )
         return OnDiskInventory(repos=on_disk, unmanaged=unmanaged)
 
@@ -579,6 +591,25 @@ class ShimBroker(TypedBrokerMixin):
     def _sources(self, slug: str) -> dict[str, str]:
         data = json.loads(self._repo_def_path(slug).read_text())
         return dict(data.get("sources") or {})
+
+    def _branches(self, slug: str) -> dict[str, str]:
+        """The declared ``line -> branch`` map, read host-side like ``_sources``."""
+        data = json.loads(self._repo_def_path(slug).read_text())
+        return dict(data.get("branches") or {})
+
+    def _expressed_line(self, slug: str, bare: Path, requested: str) -> str | None:
+        """A line the repo expresses: a declared one, or the bare's default HEAD."""
+        declared = self._branches(slug)
+        if requested in declared:
+            return declared[requested]
+        if requested in declared.values():
+            return requested
+        try:
+            if requested == GitRepo(bare).head_branch():
+                return requested
+        except GitError:
+            pass
+        return None
 
     @staticmethod
     def _resolve(repo: GitRepo, ref: str) -> str | None:
@@ -742,6 +773,36 @@ class ShimBroker(TypedBrokerMixin):
         except GitError as e:
             return _lay(slug, "failed", f"checkout {commit[:12]} failed for {slug!r}: {e}")
         return _lay(slug, "checked-out", f"checked out {commit[:12]} for {slug!r}")
+
+    def _v_checkout_branch(self, params: dict) -> dict:
+        """Mirror the real verb: a declared line only, resolved from the repo def."""
+        slug = _valid_slug(params.get("slug"))
+        requested = params.get("branch")
+        if not isinstance(requested, str) or not requested:
+            raise BrokerError(-32602, f"branch must be a non-empty string: {requested!r}")
+        observed = self._location_of(slug)
+        if observed is None or observed.worktree is None:
+            return _race(slug, "checkout_branch", "worktree vanished")
+        branch = self._expressed_line(slug, observed.bare, requested)
+        if branch is None:
+            raise BrokerError(
+                -32602,
+                f"{requested!r} is not a line {slug!r} expresses",
+            )
+        repo = GitRepo(observed.worktree)
+        if repo.is_dirty():
+            return _lay(slug, "blocked", f"{slug!r} became dirty between plan and execute")
+        if repo.resolve_ref(f"refs/heads/{branch}") is None:
+            return _lay(
+                slug, "failed",
+                f"branch {branch!r} does not exist in {slug!r}; mono-control does not "
+                f"create branches",
+            )
+        try:
+            repo.checkout(branch)
+        except GitError as e:
+            return _lay(slug, "failed", f"checkout of branch {branch!r} failed for {slug!r}: {e}")
+        return _lay(slug, "checked-out", f"attached {slug!r} to branch {branch!r}")
 
     # -- cluster layout document ------------------------------------------- #
     def _v_read_layout(self, params: dict) -> dict:

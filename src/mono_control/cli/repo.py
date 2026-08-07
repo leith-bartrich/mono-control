@@ -18,6 +18,7 @@ from rich.table import Table
 from mono_control import paths, repo_ops
 from mono_control.app_context import AppContext
 from mono_control.config import (
+    source_names,
     AmbiguousNameError,
     ConfigConflictError,
     ConfigError,
@@ -469,6 +470,31 @@ def _observed_materialized_location(ctx: typer.Context, repo: Repo) -> str:
         )
 
 
+def _resolve_line(repo: Repo, value: str) -> str:
+    """Resolve a user-supplied ``--branch`` to a concrete branch name.
+
+    Accepts the line name (``dev``) or the branch it maps to (``main``). Taking
+    only concrete names is what made ``--branch dev`` fail on a repo whose def
+    says ``{"dev": "main"}``, while the docs call ``branches`` the purpose
+    vocabulary.
+
+    A repo that declares **no** lines passes the value through: the host still
+    validates it (against the repo's default ``HEAD``), and most repos declare
+    nothing, so refusing here would be a worse hole than the one being closed.
+    When a repo *does* declare lines and the value matches none of them, say so
+    and list them — that is the case where a confident answer is possible.
+    """
+    if not repo.branches:
+        return value
+    resolved = source_names.resolve_line(repo.branches, value)
+    if resolved is None:
+        _fail(
+            f"{value!r} is not a branch line declared by {repo.slug!r} "
+            f"(declared: {source_names.declared_lines(repo.branches)})"
+        )
+    return resolved
+
+
 def _validate_branchat_sub(value: str) -> str:
     if value != "head":
         raise typer.BadParameter(
@@ -508,12 +534,16 @@ def mat_branchat(
     sub_intent: str = typer.Argument("head", callback=_validate_branchat_sub),
     slug_only: bool = _SLUG_FLAG,
 ) -> None:
-    """Check out a branch's head at the repo's current location."""
+    """Attach the worktree to a branch line at the repo's current location.
+
+    Takes a line NAME from the repo's `branches` (e.g. `dev`) or the branch it
+    maps to. HEAD ends up attached, so you can commit from the worktree.
+    """
     repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
     location = _observed_materialized_location(ctx, repo)
     target = LayoutTarget(
         targets={
-            repo.slug: LayoutTargetPresentBranchHead(branch=branch, location=location),
+            repo.slug: LayoutTargetPresentBranchHead(branch=_resolve_line(repo, branch), location=location),
         }
     )
     _apply_and_exit(ctx, target)
@@ -548,10 +578,12 @@ def mat_layout_target(
         ..., "--location", help="Subdir under mono-work (the worktree location)."
     ),
     branch: str = typer.Option(
-        None, "--branch", help="Branch whose head to check out (mutually exclusive with --commit)."
+        None, "--branch", help="Branch line to follow: a name from the repo's `branches` (e.g. `dev`) or the branch itself. Attaches HEAD to it "
+        "(mutually exclusive with --commit)."
     ),
     commit: str = typer.Option(
-        None, "--commit", help="Specific commit to check out (mutually exclusive with --branch)."
+        None, "--commit", help="Pin to a specific commit. Leaves HEAD detached "
+        "(mutually exclusive with --branch)."
     ),
     slug_only: bool = _SLUG_FLAG,
 ) -> None:
@@ -560,7 +592,7 @@ def mat_layout_target(
         _fail("--branch and --commit are mutually exclusive")
     repo = _resolve(ctx, name_or_slug, slug_only=slug_only)
     if branch:
-        desired = LayoutTargetPresentBranchHead(branch=branch, location=location)
+        desired = LayoutTargetPresentBranchHead(branch=_resolve_line(repo, branch), location=location)
     elif commit:
         desired = LayoutTargetPresentCommit(commit=commit, location=location)
     else:

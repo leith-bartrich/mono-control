@@ -35,6 +35,12 @@ class OnDiskRepo:
     state: Literal["offline", "materialized"]
     commit: str | None  # None if no commits yet (a freshly init'd bare repo)
     dirty: bool
+    # The branch HEAD is attached to, or None when detached (and always None for a
+    # bare repo, which has no worktree HEAD to speak of). Distinct from ``commit``
+    # on purpose: a detached HEAD sitting exactly on a branch's tip has the same
+    # commit and is NOT on the branch, which is precisely the state the layout
+    # engine has to be able to tell apart.
+    branch: str | None = None
 
 
 @dataclass(frozen=True)

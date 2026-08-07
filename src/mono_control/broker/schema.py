@@ -13,6 +13,7 @@ from typing import Any
 from .models import (
     AcquireRequest,
     AcquireResult,
+    CheckoutBranchRequest,
     CheckoutRequest,
     LayoutOpRequest,
     LayoutOpResult,
@@ -43,6 +44,7 @@ _WIRE_MODELS = (
     AcquireRequest,
     AcquireResult,
     LayoutOpRequest,
+    CheckoutBranchRequest,
     CheckoutRequest,
     LayoutOpResult,
     ReadLayoutRequest,

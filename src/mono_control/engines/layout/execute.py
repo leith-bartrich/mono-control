@@ -18,6 +18,8 @@ engine had.
 from __future__ import annotations
 
 from ...broker import BrokerProtocol
+from ...broker.models import LayoutOpResult
+from ...layout_target import LayoutTargetPresentBranchHead
 from .plan import PlanItem
 from .result import LayoutOutcome
 
@@ -41,6 +43,28 @@ def _relative_location(item: PlanItem, *, workspace_root) -> str:
     return item.target_location.relative_to(workspace_root).as_posix()
 
 
+def _apply_ref(item: PlanItem, *, broker: BrokerProtocol) -> LayoutOpResult:
+    """Put the worktree on the ref the intent asks for, in the intent's currency.
+
+    A branch-head intent attaches to the declared line; a commit intent pins to a
+    hex revision and leaves HEAD detached. Routing both through the hex verb is
+    what made "on this branch" inexpressible, so the choice is made here, once,
+    from the desired state rather than from the resolved commit.
+    """
+    if isinstance(item.desired, LayoutTargetPresentBranchHead):
+        return broker.checkout_branch(item.slug, item.desired.branch)
+    assert item.resolved_commit is not None
+    return broker.checkout(item.slug, item.resolved_commit)
+
+
+def _ref_description(item: PlanItem) -> str:
+    """How to name the requested ref in an outcome summary."""
+    if isinstance(item.desired, LayoutTargetPresentBranchHead):
+        return f"branch {item.desired.branch!r}"
+    assert item.resolved_commit is not None
+    return item.resolved_commit[:12]
+
+
 def _do_place_or_relocate(
     item: PlanItem, *, broker: BrokerProtocol, workspace_root
 ) -> LayoutOutcome:
@@ -57,17 +81,16 @@ def _do_place_or_relocate(
 
     # Move succeeded; a checkout failure from here leaves the repo placed-but-
     # wrong-ref → flag `partial` so the ambiguous on-disk state is visible.
-    checked = broker.checkout(item.slug, item.resolved_commit)
+    checked = _apply_ref(item, broker=broker)
     if checked.status == "checked-out":
         return _outcome(item.slug, moved)
     verb = "placed" if item.action == "place" else "relocated"
-    short = item.resolved_commit[:12]
     return LayoutOutcome(
         slug=item.slug,
         status="partial",
         summary=(
-            f"{verb} {item.slug!r} at {location} but checkout to {short} "
-            f"failed: {checked.summary}"
+            f"{verb} {item.slug!r} at {location} but checkout to "
+            f"{_ref_description(item)} failed: {checked.summary}"
         ),
     )
 
@@ -88,8 +111,7 @@ def _execute_one(
             item, broker=broker, workspace_root=workspace_root
         )
     if item.action == "checkout":
-        assert item.resolved_commit is not None
-        return _outcome(slug, broker.checkout(slug, item.resolved_commit))
+        return _outcome(slug, _apply_ref(item, broker=broker))
     if item.action == "retire":
         return _outcome(slug, broker.retire(slug))
     # Unreachable in a well-formed plan; if hit, it's an engine bug.
