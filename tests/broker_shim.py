@@ -79,6 +79,27 @@ def _default_source(sources: dict[str, str]) -> str | None:
     return next(iter(sources), None)
 
 
+def conform_tracking(repo: GitRepo) -> list[str]:
+    """Re-point every local branch at `origin`'s copy, where one exists.
+
+    Mirrors the real shim. A repoint removes the remote (to drop its stale tracking
+    refs), which also wipes branch tracking config — so conformance restores it on
+    the next operation rather than leaving it silently gone.
+    """
+    restored: list[str] = []
+    try:
+        branches = repo.local_branches()
+    except GitError:
+        return restored
+    for branch in branches:
+        try:
+            if repo.set_upstream(branch):
+                restored.append(branch)
+        except GitError:
+            continue
+    return restored
+
+
 def conform_remotes(repo: GitRepo, sources: dict[str, str]) -> list[str]:
     """Git remotes per declared source, plus `origin` aliasing the default.
 
@@ -253,6 +274,18 @@ class GitRepo:
     def checkout(self, ref: str) -> None:
         # ``--`` guards a ref beginning with ``-`` from being read as a flag.
         self._git("checkout", ref, "--")
+
+    def set_upstream(self, branch: str, remote: str = ORIGIN) -> bool:
+        """Point ``branch`` at ``remote``'s copy of it. False if there is none."""
+        if self.resolve_ref(f"refs/remotes/{remote}/{branch}") is None:
+            return False
+        self._git("config", f"branch.{branch}.remote", remote)
+        self._git("config", f"branch.{branch}.merge", f"refs/heads/{branch}")
+        return True
+
+    def local_branches(self) -> list[str]:
+        out = self._git("for-each-ref", "--format=%(refname:short)", "refs/heads")
+        return [line for line in out.splitlines() if line]
 
     def attached_branch(self) -> str | None:
         """The branch HEAD is attached to, or ``None`` when detached."""
@@ -659,6 +692,7 @@ class ShimBroker(TypedBrokerMixin):
                 repo.fetch(ORIGIN)
             except GitError as e:
                 return _src(slug, "fetch-failed", f"fetch {slug!r} failed: {e}")
+            conform_tracking(repo)
             return self._verify(slug, repo, refs, "cloned", f"cloned {slug!r}")
 
         # Present (offline or materialized) -> conform remotes, then fetch.
@@ -669,6 +703,7 @@ class ShimBroker(TypedBrokerMixin):
                 repo.fetch(ORIGIN)
             except GitError as e:
                 return _src(slug, "fetch-failed", f"fetch {slug!r} failed: {e}")
+            conform_tracking(repo)
         if source_url is None and not refs:
             return _src(slug, "ok", f"{slug!r} present, no source to fetch")
         return self._verify(slug, repo, refs, "fetched", f"fetched {slug!r}")
@@ -802,7 +837,9 @@ class ShimBroker(TypedBrokerMixin):
             repo.checkout(branch)
         except GitError as e:
             return _lay(slug, "failed", f"checkout of branch {branch!r} failed for {slug!r}: {e}")
-        return _lay(slug, "checked-out", f"attached {slug!r} to branch {branch!r}")
+        tracked = repo.set_upstream(branch)
+        detail = f" tracking {ORIGIN}/{branch}" if tracked else ""
+        return _lay(slug, "checked-out", f"attached {slug!r} to branch {branch!r}{detail}")
 
     # -- cluster layout document ------------------------------------------- #
     def _v_read_layout(self, params: dict) -> dict:

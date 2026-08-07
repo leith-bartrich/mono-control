@@ -205,3 +205,52 @@ class TestOnlyExpressedLinesReachGit:
         assert out["status"] == "failed"
         assert "does not create branches" in out["summary"]
         assert GitRepo(wt).attached_branch() == before, "left as it was"
+
+
+class TestUpstreamTracking:
+    """Attaching without tracking leaves `git pull` with "no tracking information",
+    which is most of what a developer wanted the branch for. #30 stage 3."""
+
+    def _tracking(self, wt: Path, branch: str = "main") -> tuple[str | None, str | None]:
+        repo = GitRepo(wt)
+        def cfg(key):
+            try:
+                return repo.config_get(key)
+            except Exception:  # noqa: BLE001
+                return None
+        return cfg(f"branch.{branch}.remote"), cfg(f"branch.{branch}.merge")
+
+    def test_attaching_sets_upstream(self, broker_env, tmp_path):
+        wt = _place_pinned(broker_env, tmp_path)
+
+        _run(broker_env, "repo", "mat", "branchat", "proj", "main")
+
+        assert self._tracking(wt) == ("origin", "refs/heads/main")
+
+    def test_placing_on_a_line_sets_upstream_too(self, broker_env, tmp_path):
+        wt = _place_on_line(broker_env, tmp_path)
+        assert self._tracking(wt) == ("origin", "refs/heads/main")
+
+    def test_a_pinned_placement_gets_no_upstream(self, broker_env, tmp_path):
+        """A detached pin is not on a line, so there is nothing to track."""
+        wt = _place_pinned(broker_env, tmp_path)
+        assert GitRepo(wt).attached_branch() is None
+
+    def test_conformance_restores_tracking_after_a_repoint(self, broker_env, tmp_path):
+        """`git remote remove` — how a repoint is done — also wipes branch tracking.
+
+        Without conformance re-asserting it, tracking stays silently gone until
+        someone notices `git pull` complaining.
+        """
+        wt = _place_on_line(broker_env, tmp_path)
+        assert self._tracking(wt) == ("origin", "refs/heads/main")
+
+        # Simulate what a repoint does to the bare.
+        bare = broker_env.off / "proj"
+        run_git(["-C", str(bare), "remote", "remove", "origin"])
+        assert self._tracking(wt) == (None, None), "precondition: tracking wiped"
+
+        # Any operation conforms; acquire runs on every one.
+        _run(broker_env, "repo", "mat", "branchat", "proj", "main")
+
+        assert self._tracking(wt) == ("origin", "refs/heads/main")

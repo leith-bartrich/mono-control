@@ -48,7 +48,7 @@ def _cluster_origin(
     return run_git(["rev-parse", "HEAD"], cwd=path)
 
 
-def _seed(env, slug: str, origin: Path, *, aspects=None) -> None:
+def _seed(env, slug: str, origin: Path, *, aspects=None, branches=None) -> None:
     RepoStore(env.broker).create(
         Repo(
             version=1,
@@ -56,6 +56,7 @@ def _seed(env, slug: str, origin: Path, *, aspects=None) -> None:
             name=slug,
             sources={"origin": str(origin)},
             aspects=aspects or set(),
+            branches=branches or {},
         )
     )
 
@@ -466,3 +467,87 @@ def test_conform_clear_retires_a_clean_detached_worktree(broker_env, tmp_path):
     res = _invoke(env, ["conform", "clear"])
     assert res.exit_code == 0, res.output
     assert not (env.ws / "alpha").exists()
+
+
+# --------------------------------------------------------------------------- #
+# #30 stage 3: relayout expresses a ref intent on fresh placement
+# --------------------------------------------------------------------------- #
+def test_relayout_attaches_dev_members_and_the_cluster(broker_env, tmp_path):
+    """A dev member's latest IS a living branch head, and `branches.dev` names it.
+
+    Before this, every relayout-placed worktree was detached, so committing from
+    one meant leaving the tool — including committing the cluster's own layout
+    document, which mono-control itself authors.
+    """
+    env = broker_env
+    _origin(tmp_path / "m1o")
+    _origin(tmp_path / "m2o")
+    _cluster_origin(
+        tmp_path / "clo",
+        _members({"m1": ("src/m1", "dev"), "m2": ("libs/m2", "dep")}),
+    )
+    _seed(env, "m1", tmp_path / "m1o", branches={"dev": "main"})
+    _seed(env, "m2", tmp_path / "m2o", branches={"dev": "main"})
+    _seed(env, "cluster1", tmp_path / "clo", aspects={"product-cluster"},
+          branches={"dev": "main"})
+
+    res = _invoke(env, ["conform", "relayout", "cluster1"])
+
+    assert res.exit_code == 0, res.output
+    assert GitRepo(env.ws / "src" / "m1").attached_branch() == "main", "dev member"
+    assert GitRepo(env.ws / "products" / "cluster1").attached_branch() == "main", "cluster"
+
+
+def test_relayout_leaves_deps_detached(broker_env, tmp_path):
+    """A dep's revision comes from the snapshot ledger — inputs relayout does not
+    read and, by contract, should not. Detached is the honest form of "no policy
+    applied yet"."""
+    env = broker_env
+    _origin(tmp_path / "m1o")
+    _origin(tmp_path / "m2o")
+    _cluster_origin(
+        tmp_path / "clo",
+        _members({"m1": ("src/m1", "dev"), "m2": ("libs/m2", "dep")}),
+    )
+    _seed(env, "m1", tmp_path / "m1o", branches={"dev": "main"})
+    _seed(env, "m2", tmp_path / "m2o", branches={"dev": "main"})
+    _seed(env, "cluster1", tmp_path / "clo", aspects={"product-cluster"},
+          branches={"dev": "main"})
+
+    assert _invoke(env, ["conform", "relayout", "cluster1"]).exit_code == 0
+
+    assert GitRepo(env.ws / "libs" / "m2").attached_branch() is None
+
+
+def test_relayout_leaves_an_existing_worktrees_ref_alone(broker_env, tmp_path):
+    """Relayout means membership and location. A developer sitting on a feature
+    branch must not be yanked back because someone re-ran a layout — which also
+    means no migration pass for worktrees placed before this change."""
+    env = broker_env
+    _origin(tmp_path / "m1o")
+    _cluster_origin(tmp_path / "clo", _members({"m1": ("src/m1", "dev")}))
+    _seed(env, "m1", tmp_path / "m1o", branches={"dev": "main"})
+    _seed(env, "cluster1", tmp_path / "clo", aspects={"product-cluster"},
+          branches={"dev": "main"})
+    assert _invoke(env, ["conform", "relayout", "cluster1"]).exit_code == 0
+
+    wt = env.ws / "src" / "m1"
+    run_git(["-C", str(wt), "checkout", "-b", "feature/mine"])
+
+    assert _invoke(env, ["conform", "relayout", "cluster1"]).exit_code == 0
+
+    assert GitRepo(wt).attached_branch() == "feature/mine", "left where the developer put it"
+
+
+def test_relayout_gives_no_opinion_without_a_declared_dev_line(broker_env, tmp_path):
+    """`branches.dev` is what names the line. Falling back to the remote's default
+    would be guessing at policy rather than reading it."""
+    env = broker_env
+    _origin(tmp_path / "m1o")
+    _cluster_origin(tmp_path / "clo", _members({"m1": ("src/m1", "dev")}))
+    _seed(env, "m1", tmp_path / "m1o")  # declares nothing
+    _seed(env, "cluster1", tmp_path / "clo", aspects={"product-cluster"})
+
+    assert _invoke(env, ["conform", "relayout", "cluster1"]).exit_code == 0
+
+    assert GitRepo(env.ws / "src" / "m1").attached_branch() is None

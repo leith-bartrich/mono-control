@@ -15,11 +15,12 @@ from typing import Callable
 from rich.console import Console
 
 from mono_control import paths, repo_ops
-from mono_control.config import Repo, RepoStore
+from mono_control.config import Repo, RepoStore, source_names
 from mono_control.layout_target import (
     LayoutTarget,
     LayoutTargetAbsent,
     LayoutTargetPresentAsIs,
+    LayoutTargetPresentBranchHead,
 )
 from mono_control.on_disk import scan
 
@@ -252,13 +253,59 @@ def relayout(
         if not on_missing_required(list(missing)):
             return False
 
-    targets = {
-        slug: LayoutTargetPresentAsIs(location=aspect_location(known[slug]))
+    targets: dict[str, LayoutTargetPresentAsIs | LayoutTargetPresentBranchHead] = {
+        slug: _placement_target(
+            slug, aspect_location(known[slug]), follow_dev=True,
+            materialized=materialized, store=store,
+        )
         for slug in closure.active
     }
     for slug, member in merge.members.items():
-        targets[slug] = LayoutTargetPresentAsIs(location=member.location)
+        targets[slug] = _placement_target(
+            slug, member.location, follow_dev=member.role == "dev",
+            materialized=materialized, store=store,
+        )
     return apply(LayoutTarget(pre_clear=True, targets=targets), store=store, console=console)
+
+
+def _placement_target(
+    slug: str,
+    location: str,
+    *,
+    follow_dev: bool,
+    materialized: set[str],
+    store: RepoStore,
+) -> LayoutTargetPresentAsIs | LayoutTargetPresentBranchHead:
+    """The ref intent relayout expresses for one repo at ``location``.
+
+    Two rules, both from #30.
+
+    **Only on fresh placement.** An already-materialized worktree keeps whatever
+    ref it is on. Relayout means *membership and location*; a developer sitting on
+    a feature branch in a dev member must not be yanked back to the dev line
+    because someone re-ran a layout. That also means no migration pass: existing
+    worktrees are left exactly as they are, and `mat branchat` is how you move one.
+
+    **Dev members and the cluster follow their line; deps stay detached.** A dev
+    member's latest *is* a living branch head and ``branches.dev`` names it, so the
+    intent is determined by inputs relayout already holds. A dep's revision comes
+    from the snapshot ledger — inputs relayout does not read and, by contract,
+    should not — so expressing a line for it would assert a revision policy it has
+    no authority over. Detached is the honest form of "no policy applied yet".
+
+    A repo that declares no ``dev`` line gets no opinion either: ``branches.dev``
+    is what names the line, and inventing one from the remote's default would be
+    guessing at policy rather than reading it.
+    """
+    if slug in materialized or not follow_dev:
+        return LayoutTargetPresentAsIs(location=location)
+    try:
+        dev = store.load(slug).branches.get(source_names.DEV)
+    except Exception:  # noqa: BLE001 - an unreadable def is the layout engine's to report
+        dev = None
+    if not dev:
+        return LayoutTargetPresentAsIs(location=location)
+    return LayoutTargetPresentBranchHead(branch=dev, location=location)
 
 
 def swap(
